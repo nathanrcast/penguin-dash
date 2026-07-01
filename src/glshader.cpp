@@ -228,7 +228,7 @@ static const char* VS_3D =
 	"    }\n"
 	"    lit = vec4(rgb, dif.a);\n"
 	"  } else {\n"
-	"    lit = dif;\n"
+	"    lit = a_color;\n" // lighting off: fixed-function uses the vertex color directly
 	"  }\n"
 	"  v_color = clamp(lit, 0.0, 1.0);\n"
 	"  vec4 p4 = vec4(a_position, 1.0);\n"
@@ -571,6 +571,40 @@ void Shader3D_DrawQuadArray(int nQuads) {
 		idx.push_back(b); idx.push_back(b + 2); idx.push_back(b + 3);
 	}
 	glDrawElements(GL_TRIANGLES, nQuads * 6, GL_UNSIGNED_SHORT, idx.data());
+}
+
+// Unlit textured primitive (skybox side): position array + texcoord array +
+// a constant vertex colour (no per-vertex colour / normal). posType lets the
+// caller pass GL_SHORT positions.
+void Shader3D_SetTexturedArray(const void* pos, unsigned int posType, const float* tex,
+                               const sf::Color& col) {
+	if (!CoreShaders.ready) return;
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, posType, GL_FALSE, 0, pos);
+	pglEnableVertexAttribArray(a3d.texcoord);
+	pglVertexAttribPointer(a3d.texcoord, 2, GL_FLOAT, GL_FALSE, 0, tex);
+	if (a3d.normal >= 0) pglDisableVertexAttribArray(a3d.normal);
+	if (a3d.color >= 0) {
+		pglDisableVertexAttribArray(a3d.color);
+		pglVertexAttrib4f(a3d.color, col.r / 255.f, col.g / 255.f, col.b / 255.f, col.a / 255.f);
+	}
+}
+
+// Unlit coloured primitive (fog plane): position array (3 float) + colour array
+// (4 unsigned byte, normalised), no texcoord / normal.
+void Shader3D_SetColoredArray(const float* pos, const unsigned char* color) {
+	if (!CoreShaders.ready) return;
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, 0, pos);
+	pglEnableVertexAttribArray(a3d.color);
+	pglVertexAttribPointer(a3d.color, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, color);
+	if (a3d.normal >= 0)   pglDisableVertexAttribArray(a3d.normal);
+	if (a3d.texcoord >= 0) pglDisableVertexAttribArray(a3d.texcoord);
+}
+
+void Shader3D_DrawArrays(unsigned int mode, int count) {
+	if (!CoreShaders.ready || a3d.pos < 0) return;
+	glDrawArrays(mode, 0, count);
 }
 
 void Shader3D_End() {

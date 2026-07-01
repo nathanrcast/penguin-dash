@@ -21,6 +21,7 @@ GNU General Public License for more details.
 
 #include "env.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "textures.h"
 #include "spx.h"
 #include "view.h"
@@ -207,21 +208,23 @@ void CEnvironment::DrawSkybox(const TVector3d& pos) const {
 	static const float bb = 0.995f;
 #endif
 
-	glColor4ub(255, 255, 255, 255);
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_DECAL);
-	glPushMatrix();
-	glTranslate(pos);
-
+	// GLES2: unlit textured quads through the 3D shader. DECAL with an opaque
+	// skybox texture == modulate by white, which the shader does for a white
+	// constant colour. Model transform (translate to camera) replaces
+	// glPushMatrix/glTranslate.
 	static const GLfloat tex[] = {
 		aa, bb,
 		bb, bb,
 		bb, aa,
 		aa, aa
 	};
-	glTexCoordPointer(2, GL_FLOAT, 0, tex);
+	const sf::Color white(255, 255, 255, 255);
 
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	Shader3D_Begin3D();
+	TMatrix<4, 4> model;
+	model.SetTranslationMatrix(pos.x, pos.y, pos.z);
+	Shader3D_SetModel3D(model);
+
 	// front
 	static const GLshort front[] = {
 		-1, -1, -1,
@@ -229,10 +232,9 @@ void CEnvironment::DrawSkybox(const TVector3d& pos) const {
 		    1,  1, -1,
 		    -1,  1, -1
 	    };
-
 	Skybox[0].Bind();
-	glVertexPointer(3, GL_SHORT, 0, front);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+	Shader3D_SetTexturedArray(front, GL_SHORT, tex, white);
+	Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 
 	// left
 	static const GLshort left[] = {
@@ -242,8 +244,8 @@ void CEnvironment::DrawSkybox(const TVector3d& pos) const {
 		    -1,  1,  1
 	    };
 	Skybox[1].Bind();
-	glVertexPointer(3, GL_SHORT, 0, left);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+	Shader3D_SetTexturedArray(left, GL_SHORT, tex, white);
+	Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 
 	// right
 	static const GLshort right[] = {
@@ -253,8 +255,8 @@ void CEnvironment::DrawSkybox(const TVector3d& pos) const {
 		1,  1, -1
 	};
 	Skybox[2].Bind();
-	glVertexPointer(3, GL_SHORT, 0, right);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+	Shader3D_SetTexturedArray(right, GL_SHORT, tex, white);
+	Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 
 	// normally, the following textures are unvisible
 	// see game_config.cpp (param.full_skybox)
@@ -267,8 +269,8 @@ void CEnvironment::DrawSkybox(const TVector3d& pos) const {
 			    -1, 1,  1
 		    };
 		Skybox[3].Bind();
-		glVertexPointer(3, GL_SHORT, 0, top);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+		Shader3D_SetTexturedArray(top, GL_SHORT, tex, white);
+		Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 
 		// bottom
 		static const GLshort bottom[] = {
@@ -278,8 +280,8 @@ void CEnvironment::DrawSkybox(const TVector3d& pos) const {
 			    -1, -1, -1
 		    };
 		Skybox[4].Bind();
-		glVertexPointer(3, GL_SHORT, 0, bottom);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+		Shader3D_SetTexturedArray(bottom, GL_SHORT, tex, white);
+		Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 
 		// back
 		static const GLshort back[] = {
@@ -289,12 +291,10 @@ void CEnvironment::DrawSkybox(const TVector3d& pos) const {
 			1,  1, 1
 		};
 		Skybox[5].Bind();
-		glVertexPointer(3, GL_SHORT, 0, back);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+		Shader3D_SetTexturedArray(back, GL_SHORT, tex, white);
+		Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 	}
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glPopMatrix();
+	Shader3D_End();
 }
 
 void CEnvironment::DrawFog() const {
@@ -302,7 +302,7 @@ void CEnvironment::DrawFog() const {
 		return;
 
 	TPlane bottom_plane, top_plane;
-	TVector3d left, right, vpoint;
+	TVector3d left, right;
 	TVector3d topleft, topright;
 	TVector3d bottomleft, bottomright;
 
@@ -342,35 +342,39 @@ void CEnvironment::DrawFog() const {
 	ScopedRenderMode rm(FOG_PLANE);
 	glEnable(GL_FOG);
 
-	// only the alpha channel is used
+	// only the alpha channel is used; RGB comes from the fog colour via the
+	// shader's fog term (the plane is unlit black, fogged by eye distance).
 	static const GLubyte bottom_dens[4]     = { 0, 0, 0, 255 };
 	static const GLubyte top_dens[4]        = { 0, 0, 0, 230 };
 	static const GLubyte leftright_dens[4]  = { 0, 0, 0, 77 };
 	static const GLubyte top_bottom_dens[4] = { 0, 0, 0, 0 };
 
-	glBegin(GL_QUAD_STRIP);
-	glColor4ubv(bottom_dens);
-	glVertex3(bottomleft);
-	glVertex3(bottomright);
-	glVertex3(left);
-	glVertex3(right);
+	// GLES2: the old GL_QUAD_STRIP becomes a triangle strip with the same
+	// vertex order (identical tessellation; FOG_PLANE has cull disabled).
+	float pos[30];
+	GLubyte col[40];
+	auto put = [&](int i, const TVector3d& p, const GLubyte c[4]) {
+		pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+		col[i * 4] = c[0]; col[i * 4 + 1] = c[1]; col[i * 4 + 2] = c[2]; col[i * 4 + 3] = c[3];
+	};
+	put(0, bottomleft, bottom_dens);
+	put(1, bottomright, bottom_dens);
+	put(2, left, bottom_dens);
+	put(3, right, bottom_dens);
+	put(4, topleft, top_dens);
+	put(5, topright, top_dens);
+	put(6, topleft + leftvec, leftright_dens);
+	put(7, topright + rightvec, leftright_dens);
+	put(8, topleft + 3.0 * leftvec, top_bottom_dens);
+	put(9, topright + 3.0 * rightvec, top_bottom_dens);
 
-	glColor4ubv(top_dens);
-	glVertex3(topleft);
-	glVertex3(topright);
-
-	glColor4ubv(leftright_dens);
-	vpoint = topleft + leftvec;
-	glVertex3(vpoint);
-	vpoint = topright + rightvec;
-	glVertex3(vpoint);
-
-	glColor4ubv(top_bottom_dens);
-	vpoint = topleft + 3.0 * leftvec;
-	glVertex3(vpoint);
-	vpoint = topright + 3.0 * rightvec;
-	glVertex3(vpoint);
-	glEnd();
+	Shader3D_Begin3D();
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	Shader3D_SetModel3D(id); // fog-plane verts are already in world space
+	Shader3D_SetColoredArray(pos, col);
+	Shader3D_DrawArrays(GL_TRIANGLE_STRIP, 10);
+	Shader3D_End();
 }
 
 

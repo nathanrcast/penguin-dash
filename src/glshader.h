@@ -84,6 +84,13 @@ void Shader3D_SetModel3D(const TMatrix<4, 4>& model);
 void Shader3D_SetObjectArrays(const float* pos, const short* tex, float nx, float ny, float nz);
 void Shader3D_DrawQuadArray(int nQuads);
 
+// Environment (M3): unlit primitives. TexturedArray = position + texcoord +
+// constant colour (skybox sides). ColoredArray = position + per-vertex colour
+// (fog plane gradient). DrawArrays draws the bound arrays with any GL mode.
+void Shader3D_SetTexturedArray(const void* pos, unsigned int posType, const float* tex, const sf::Color& col);
+void Shader3D_SetColoredArray(const float* pos, const unsigned char* color);
+void Shader3D_DrawArrays(unsigned int mode, int count);
+
 // Disable the attrib arrays and restore the fixed-function pipeline.
 void Shader3D_End();
 
