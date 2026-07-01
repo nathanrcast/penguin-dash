@@ -91,7 +91,16 @@ context switch.
   intentionally left fixed-function** — the converted draws each set their own ortho via
   `Shader2D_Begin`, so nothing depends on it; it's removed in M6 cleanup with the other desktop-GL-only
   calls. **First visual proof met: menus + HUD render** (gauge + timer verified in a play-tested race).
-- **M2 – Terrain:** `course_render.cpp` arrays → VBO + 3D shader (light+fog). Course renders.
+- **M2 – Terrain:** ✅ **DONE 2026-07-01** (commit `74f4178`). The terrain mesh (`quadtree.cpp`
+  `DrawTris`/`glDrawElements` over the interleaved VNC array) draws through the core 3D program.
+  **Desktop-first key decision:** instead of intercepting the matrix/light/fog calls scattered across
+  the engine, `Shader3D_BeginVNC` **snapshots the live fixed-function state via `glGet*`** at draw time
+  (proj+modelview, light 0, global ambient, material, color-material flag, object-linear texgen planes,
+  linear fog, enables) and reproduces it — guarantees a pixel match on desktop. VS_3D/FS_3D rewritten to
+  **per-vertex Gouraud** lighting matching fixed-function. Verified rendering correctly (lighting+fog+
+  texture, static and moving camera) in a Bunny Hill practice race. **Trees/items (`DrawTrees`, GL_QUADS
+  + `glPushMatrix`) still fixed-function — fold into M2b or M4.** **Android TODO:** the `glGet` snapshot
+  is desktop-GL-only; swap for tracked matrices/uniforms before the GLES2 context switch (with M6).
 - **M3 – Environment:** `env.cpp` sky/fog (quad-strip + arrays).
 - **M4 – Characters:** `tux.cpp` — replace `gluSphere` with a generated sphere mesh; convert the 3
   `glBegin` fans/strips; material/light. Tux renders correctly.
