@@ -105,7 +105,11 @@ context switch.
   software — no matrix stack), `GL_QUADS`→triangles (`Shader3D_DrawQuadArray`), constant/per-item
   normal, and **alpha-test → `discard`** in FS_3D (snapshot from `GL_ALPHA_TEST`/`GL_ALPHA_TEST_REF`).
   Verified: trees + items render with correct billboard alpha transparency, lighting, placement, fog.
-- **M3 – Environment:** `env.cpp` sky/fog (quad-strip + arrays).
+- **M3 – Environment:** ✅ **DONE 2026-07-01** (commit `09c8cca`). `env.cpp` `DrawSkybox` (unlit
+  textured quads, `Shader3D_SetTexturedArray` + const white, model=translate-to-camera) and `DrawFog`
+  (`GL_QUAD_STRIP`→`GL_TRIANGLE_STRIP`, per-vertex colour array, coloured by the shader fog term). The
+  3D shader's lighting-OFF branch now uses the vertex colour directly (matches fixed-function ignoring
+  material when lighting is off). Verified: skybox + distance fog render correctly.
 - **M4 – Characters:** `tux.cpp` — replace `gluSphere` with a generated sphere mesh; convert the 3
   `glBegin` fans/strips; material/light. Tux renders correctly.
 - **M5 – Decals & snow:** `track_marks.cpp` (2 `glBegin`) + `particles.cpp`; verify blend/alpha states.
