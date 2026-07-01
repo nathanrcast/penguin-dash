@@ -19,14 +19,22 @@ keystore signing, `assembleRelease`, sideload).
    (GL/GLU dev already present). Notably compiled + linked against system **SFML 2.6.1** despite the
    source targeting 2.5 — **no API breakage** (de-risks the SFML-Android step). Binary: `src/etr` (15M),
    all libs resolved. Launch needs a data dir (repo ships `data/`); run on the physical display `:0`.
-2. **GLES rendering rewrite — the main task:** ✅ **AUDITED 2026-07-01 → `docs/gles_render_audit.md`.**
-   More tractable than the raw count implied: rendering is centralized behind `ogl.h`/`ogl.cpp`, the
-   engine already drives its own `TMatrix<4,4>` (no GL matrix stack to replace), and vertex arrays are
-   already the norm — only **7 true `glBegin` blocks**. Plan: introduce 2–3 shaders + a software matrix
-   stack + an immediate-mode batching shim behind the existing abstraction, then work 6 milestones
-   (M0 scaffolding → M6 cleanup), desktop-first against a GLES2-compatible context before Android.
-3. **SFML on Android:** SFML 2.5 has an official Android/NDK backend — stand up the SFML Android
+2. **GLES rendering rewrite — the main task:** ✅ **DONE 2026-07-01 (M0–M6) → `docs/gles_render_audit.md`.**
+   Full desktop-first GLES2 rewrite shipped across 6 milestones (M0 scaffolding → M6 cleanup). Renderer
+   is now shader-based (2D + 3D programs), matrices/light/material/fog/texgen/alpha all tracked
+   engine-side in `TRenderState` and fed as uniforms — **no fixed-function calls left in the active
+   render path** (remaining matches are comments or editor/tool/test code). Clean recompile of all of
+   `src/` is green (zero errors/warnings), `src/etr` relinks. **Loose end for step 3:** vestigial
+   `glVertex3`/`glNormal3`/`glTexCoord2`/`glTranslate` wrappers in `ogl.cpp` are now unreferenced but
+   still call GLES2-nonexistent `gl*d` symbols — prune when the Android link surfaces them.
+3. **SFML on Android:** SFML 2.6 has an official Android/NDK backend — stand up the SFML Android
    project template (Gradle + NDK), reuse OneCube keystore/signing.
+   **Toolchain probe 2026-07-01 (`.13`):** NDK 26.3 + 27.3, SDK platform-34 / build-tools 34.0.0, and
+   `~/keystores/onecube-android-release.jks` are present. OneCube ships a reusable Gradle template at
+   `assaultcube/source/android/` (native side is SDL, not SFML — Gradle/manifest/signing reusable, glue
+   is not). **Gating unknown: SFML for Android is not packaged** — only desktop `amd64` 2.6.1 is
+   installed; the Android backend must be cross-compiled per-ABI from source (+ Android extlibs), OR
+   bypassed. See "Android GL/window approach" decision below.
 4. **Controls:** steering via **device tilt (accelerometer)** with on-screen touch fallback
    (brake/jump/paddle buttons). Tune for 6–10 — forgiving, simple.
 5. **Assets:** package `data/` (courses, models, textures, music) into the APK/OBB.

@@ -1,0 +1,4 @@
+// Top-level build file. AGP 8.x / Gradle 8.7 — JDK 21 compatible.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}
