@@ -43,6 +43,7 @@ PFNGLUNIFORM1FPROC               pglUniform1f = nullptr;
 PFNGLUNIFORM3FVPROC              pglUniform3fv = nullptr;
 PFNGLUNIFORM4FVPROC              pglUniform4fv = nullptr;
 PFNGLUNIFORMMATRIX3FVPROC        pglUniformMatrix3fv = nullptr;
+PFNGLVERTEXATTRIB3FPROC          pglVertexAttrib3f = nullptr;
 
 bool g_functionsLoaded = false;
 
@@ -105,6 +106,7 @@ bool InitShaderFunctions() {
 	ok &= load(pglUniform3fv, "glUniform3fv");
 	ok &= load(pglUniform4fv, "glUniform4fv");
 	ok &= load(pglUniformMatrix3fv, "glUniformMatrix3fv");
+	ok &= load(pglVertexAttrib3f, "glVertexAttrib3f");
 	g_functionsLoaded = ok;
 	return ok;
 }
@@ -239,6 +241,8 @@ static const char* VS_3D =
 static const char* FS_3D =
 	"uniform sampler2D u_tex;\n"
 	"uniform int u_useTexture;\n"
+	"uniform int u_alphaTest;\n"   // GLES2 has no glAlphaFunc: discard instead
+	"uniform float u_alphaRef;\n"
 	"uniform vec4 u_fogColor;\n"
 	"varying vec4 v_color;\n"
 	"varying vec2 v_texcoord;\n"
@@ -246,6 +250,7 @@ static const char* FS_3D =
 	"void main() {\n"
 	"  vec4 c = v_color;\n"
 	"  if (u_useTexture != 0) c *= texture2D(u_tex, v_texcoord);\n"
+	"  if (u_alphaTest != 0 && c.a < u_alphaRef) discard;\n"
 	"  c.rgb = mix(u_fogColor.rgb, c.rgb, v_fog);\n"
 	"  gl_FragColor = c;\n"
 	"}\n";
@@ -340,92 +345,54 @@ struct A3D {
 	GLint lightDir = -1, globalAmbient = -1, lightAmbient = -1, lightDiffuse = -1, lightSpecular = -1;
 	GLint matAmbient = -1, matDiffuse = -1, matSpecular = -1, shininess = -1;
 	GLint useTexGen = -1, texGenS = -1, texGenT = -1;
-	GLint useTexture = -1, tex = -1;
+	GLint useTexture = -1, tex = -1, alphaTest = -1, alphaRef = -1;
 	GLint useFog = -1, fogColor = -1, fogStart = -1, fogEnd = -1;
 	bool cached = false;
 } a3d;
 
-// normalMatrix = (upper-left 3x3 of modelview)^-T, column-major for glUniformMatrix3fv.
-void normalMatrixFromMV(const double mv[16], float out[9]) {
-	double m[3][3];
-	for (int c = 0; c < 3; c++)
-		for (int r = 0; r < 3; r++)
-			m[r][c] = mv[c * 4 + r];
-	double cof[3][3];
-	cof[0][0] =  (m[1][1] * m[2][2] - m[1][2] * m[2][1]);
-	cof[0][1] = -(m[1][0] * m[2][2] - m[1][2] * m[2][0]);
-	cof[0][2] =  (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-	cof[1][0] = -(m[0][1] * m[2][2] - m[0][2] * m[2][1]);
-	cof[1][1] =  (m[0][0] * m[2][2] - m[0][2] * m[2][0]);
-	cof[1][2] = -(m[0][0] * m[2][1] - m[0][1] * m[2][0]);
-	cof[2][0] =  (m[0][1] * m[1][2] - m[0][2] * m[1][1]);
-	cof[2][1] = -(m[0][0] * m[1][2] - m[0][2] * m[1][0]);
-	cof[2][2] =  (m[0][0] * m[1][1] - m[0][1] * m[1][0]);
-	double det = m[0][0] * cof[0][0] + m[0][1] * cof[0][1] + m[0][2] * cof[0][2];
-	if (det > -1e-12 && det < 1e-12) det = 1.0;
-	double inv = 1.0 / det;
-	// normalMatrix[r][c] = cof[r][c]/det; column-major out[c*3+r].
-	for (int c = 0; c < 3; c++)
-		for (int r = 0; r < 3; r++)
-			out[c * 3 + r] = (float)(cof[r][c] * inv);
+void normalMatrixFromMV(const double mv[16], float out[9]); // defined below
+
+// Base proj/view captured by Shader3D_Begin3D; Shader3D_SetModel3D composes a
+// per-object model onto them (avoids the fixed-function matrix stack for objects).
+TMatrix<4, 4> g3d_proj, g3d_view;
+
+void cacheLocations3D(const TShaderProgram& p) {
+	if (a3d.cached) return;
+	a3d.pos          = p.Attrib("a_position");
+	a3d.normal       = p.Attrib("a_normal");
+	a3d.texcoord     = p.Attrib("a_texcoord");
+	a3d.color        = p.Attrib("a_color");
+	a3d.mvp          = p.Uniform("u_mvp");
+	a3d.modelview    = p.Uniform("u_modelview");
+	a3d.normalMatrix = p.Uniform("u_normalMatrix");
+	a3d.useLighting  = p.Uniform("u_useLighting");
+	a3d.useColorMaterial = p.Uniform("u_useColorMaterial");
+	a3d.lightDir     = p.Uniform("u_lightDir");
+	a3d.globalAmbient = p.Uniform("u_globalAmbient");
+	a3d.lightAmbient = p.Uniform("u_lightAmbient");
+	a3d.lightDiffuse = p.Uniform("u_lightDiffuse");
+	a3d.lightSpecular = p.Uniform("u_lightSpecular");
+	a3d.matAmbient   = p.Uniform("u_matAmbient");
+	a3d.matDiffuse   = p.Uniform("u_matDiffuse");
+	a3d.matSpecular  = p.Uniform("u_matSpecular");
+	a3d.shininess    = p.Uniform("u_shininess");
+	a3d.useTexGen    = p.Uniform("u_useTexGen");
+	a3d.texGenS      = p.Uniform("u_texGenS");
+	a3d.texGenT      = p.Uniform("u_texGenT");
+	a3d.useTexture   = p.Uniform("u_useTexture");
+	a3d.tex          = p.Uniform("u_tex");
+	a3d.alphaTest    = p.Uniform("u_alphaTest");
+	a3d.alphaRef     = p.Uniform("u_alphaRef");
+	a3d.useFog       = p.Uniform("u_useFog");
+	a3d.fogColor     = p.Uniform("u_fogColor");
+	a3d.fogStart     = p.Uniform("u_fogStart");
+	a3d.fogEnd       = p.Uniform("u_fogEnd");
+	a3d.cached = true;
 }
-} // namespace
 
-void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, int colOff) {
-	if (!CoreShaders.ready) return;
-	const TShaderProgram& p = CoreShaders.shader3d;
-	p.Use();
-	if (!a3d.cached) {
-		a3d.pos          = p.Attrib("a_position");
-		a3d.normal       = p.Attrib("a_normal");
-		a3d.texcoord     = p.Attrib("a_texcoord");
-		a3d.color        = p.Attrib("a_color");
-		a3d.mvp          = p.Uniform("u_mvp");
-		a3d.modelview    = p.Uniform("u_modelview");
-		a3d.normalMatrix = p.Uniform("u_normalMatrix");
-		a3d.useLighting  = p.Uniform("u_useLighting");
-		a3d.useColorMaterial = p.Uniform("u_useColorMaterial");
-		a3d.lightDir     = p.Uniform("u_lightDir");
-		a3d.globalAmbient = p.Uniform("u_globalAmbient");
-		a3d.lightAmbient = p.Uniform("u_lightAmbient");
-		a3d.lightDiffuse = p.Uniform("u_lightDiffuse");
-		a3d.lightSpecular = p.Uniform("u_lightSpecular");
-		a3d.matAmbient   = p.Uniform("u_matAmbient");
-		a3d.matDiffuse   = p.Uniform("u_matDiffuse");
-		a3d.matSpecular  = p.Uniform("u_matSpecular");
-		a3d.shininess    = p.Uniform("u_shininess");
-		a3d.useTexGen    = p.Uniform("u_useTexGen");
-		a3d.texGenS      = p.Uniform("u_texGenS");
-		a3d.texGenT      = p.Uniform("u_texGenT");
-		a3d.useTexture   = p.Uniform("u_useTexture");
-		a3d.tex          = p.Uniform("u_tex");
-		a3d.useFog       = p.Uniform("u_useFog");
-		a3d.fogColor     = p.Uniform("u_fogColor");
-		a3d.fogStart     = p.Uniform("u_fogStart");
-		a3d.fogEnd       = p.Uniform("u_fogEnd");
-		a3d.cached = true;
-	}
-
-	// --- snapshot the live fixed-function state ---
-	GLdouble proj[16], mv[16];
-	glGetDoublev(GL_PROJECTION_MATRIX, proj);
-	glGetDoublev(GL_MODELVIEW_MATRIX, mv);
-	TMatrix<4, 4> projM, mvM;
-	for (int c = 0; c < 4; c++)
-		for (int r = 0; r < 4; r++) {
-			projM[c][r] = proj[c * 4 + r];
-			mvM[c][r] = mv[c * 4 + r];
-		}
-	TMatrix<4, 4> mvp = projM * mvM;
-	float m16[16];
-	MatrixToGL(mvp, m16);
-	pglUniformMatrix4fv(a3d.mvp, 1, GL_FALSE, m16);
-	MatrixToGL(mvM, m16);
-	pglUniformMatrix4fv(a3d.modelview, 1, GL_FALSE, m16);
-	float nm[9];
-	normalMatrixFromMV(mv, nm);
-	pglUniformMatrix3fv(a3d.normalMatrix, 1, GL_FALSE, nm);
-
+// Snapshot all non-matrix fixed-function state into the 3D program uniforms:
+// lighting, material, texgen, texture, alpha test, fog.
+void snapEnv3D() {
 	pglUniform1i(a3d.useLighting, glIsEnabled(GL_LIGHTING) ? 1 : 0);
 	pglUniform1i(a3d.useColorMaterial, glIsEnabled(GL_COLOR_MATERIAL) ? 1 : 0);
 
@@ -463,6 +430,11 @@ void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, in
 	pglUniform1i(a3d.useTexture, glIsEnabled(GL_TEXTURE_2D) ? 1 : 0);
 	pglUniform1i(a3d.tex, 0);
 
+	GLfloat aref = 0.f;
+	glGetFloatv(GL_ALPHA_TEST_REF, &aref);
+	pglUniform1i(a3d.alphaTest, glIsEnabled(GL_ALPHA_TEST) ? 1 : 0);
+	pglUniform1f(a3d.alphaRef, aref);
+
 	GLfloat fc[4], fs = 0.f, fe = 1.f;
 	glGetFloatv(GL_FOG_COLOR, fc);
 	glGetFloatv(GL_FOG_START, &fs);
@@ -471,8 +443,72 @@ void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, in
 	pglUniform4fv(a3d.fogColor, 1, fc);
 	pglUniform1f(a3d.fogStart, fs);
 	pglUniform1f(a3d.fogEnd, fe);
+}
 
-	// --- point the generic attribs into the interleaved buffer ---
+// Read a GL matrix (column-major double[16]) into a TMatrix.
+void glMatrixToTMatrix(GLenum which, TMatrix<4, 4>& out) {
+	GLdouble m[16];
+	glGetDoublev(which, m);
+	for (int c = 0; c < 4; c++)
+		for (int r = 0; r < 4; r++)
+			out[c][r] = m[c * 4 + r];
+}
+
+// Upload mvp/modelview/normalMatrix given a modelview TMatrix.
+void uploadMatrices3D(const TMatrix<4, 4>& projM, const TMatrix<4, 4>& mvM) {
+	float m16[16];
+	MatrixToGL(projM * mvM, m16);
+	pglUniformMatrix4fv(a3d.mvp, 1, GL_FALSE, m16);
+	MatrixToGL(mvM, m16);
+	pglUniformMatrix4fv(a3d.modelview, 1, GL_FALSE, m16);
+	double mvd[16];
+	for (int i = 0; i < 16; i++) mvd[i] = mvM.data()[i];
+	float nm[9];
+	normalMatrixFromMV(mvd, nm);
+	pglUniformMatrix3fv(a3d.normalMatrix, 1, GL_FALSE, nm);
+}
+
+// normalMatrix = (upper-left 3x3 of modelview)^-T, column-major for glUniformMatrix3fv.
+void normalMatrixFromMV(const double mv[16], float out[9]) {
+	double m[3][3];
+	for (int c = 0; c < 3; c++)
+		for (int r = 0; r < 3; r++)
+			m[r][c] = mv[c * 4 + r];
+	double cof[3][3];
+	cof[0][0] =  (m[1][1] * m[2][2] - m[1][2] * m[2][1]);
+	cof[0][1] = -(m[1][0] * m[2][2] - m[1][2] * m[2][0]);
+	cof[0][2] =  (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+	cof[1][0] = -(m[0][1] * m[2][2] - m[0][2] * m[2][1]);
+	cof[1][1] =  (m[0][0] * m[2][2] - m[0][2] * m[2][0]);
+	cof[1][2] = -(m[0][0] * m[2][1] - m[0][1] * m[2][0]);
+	cof[2][0] =  (m[0][1] * m[1][2] - m[0][2] * m[1][1]);
+	cof[2][1] = -(m[0][0] * m[1][2] - m[0][2] * m[1][0]);
+	cof[2][2] =  (m[0][0] * m[1][1] - m[0][1] * m[1][0]);
+	double det = m[0][0] * cof[0][0] + m[0][1] * cof[0][1] + m[0][2] * cof[0][2];
+	if (det > -1e-12 && det < 1e-12) det = 1.0;
+	double inv = 1.0 / det;
+	// normalMatrix[r][c] = cof[r][c]/det; column-major out[c*3+r].
+	for (int c = 0; c < 3; c++)
+		for (int r = 0; r < 3; r++)
+			out[c * 3 + r] = (float)(cof[r][c] * inv);
+}
+} // namespace
+
+void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, int colOff) {
+	if (!CoreShaders.ready) return;
+	const TShaderProgram& p = CoreShaders.shader3d;
+	p.Use();
+	cacheLocations3D(p);
+
+	// Snapshot the live fixed-function state, using the current modelview
+	// directly (terrain is drawn in world space, model = identity).
+	TMatrix<4, 4> projM, mvM;
+	glMatrixToTMatrix(GL_PROJECTION_MATRIX, projM);
+	glMatrixToTMatrix(GL_MODELVIEW_MATRIX, mvM);
+	uploadMatrices3D(projM, mvM);
+	snapEnv3D();
+
+	// Point the generic attribs into the interleaved buffer.
 	const GLubyte* b = static_cast<const GLubyte*>(base);
 	pglEnableVertexAttribArray(a3d.pos);
 	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, stride, b + posOff);
@@ -492,10 +528,56 @@ void Shader3D_DrawElementsU32(unsigned int count, const unsigned int* indices) {
 	glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, indices);
 }
 
+// --- object path (billboards): base proj/view captured once, per-object model ---
+void Shader3D_Begin3D() {
+	if (!CoreShaders.ready) return;
+	const TShaderProgram& p = CoreShaders.shader3d;
+	p.Use();
+	cacheLocations3D(p);
+	glMatrixToTMatrix(GL_PROJECTION_MATRIX, g3d_proj);
+	glMatrixToTMatrix(GL_MODELVIEW_MATRIX, g3d_view);
+	snapEnv3D();
+}
+
+void Shader3D_SetModel3D(const TMatrix<4, 4>& model) {
+	if (!CoreShaders.ready) return;
+	uploadMatrices3D(g3d_proj, g3d_view * model); // modelview = view * model
+}
+
+// Bind a per-object billboard: float xyz positions, short st texcoords (tight),
+// and a constant normal (trees/items provide one normal, not an array).
+void Shader3D_SetObjectArrays(const float* pos, const GLshort* tex,
+                              float nx, float ny, float nz) {
+	if (!CoreShaders.ready) return;
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, 0, pos);
+	pglEnableVertexAttribArray(a3d.texcoord);
+	pglVertexAttribPointer(a3d.texcoord, 2, GL_SHORT, GL_FALSE, 0, tex);
+	if (a3d.color >= 0)  pglDisableVertexAttribArray(a3d.color);   // material via uniform
+	if (a3d.normal >= 0) {
+		pglDisableVertexAttribArray(a3d.normal);
+		pglVertexAttrib3f(a3d.normal, nx, ny, nz);
+	}
+}
+
+// Draw nQuads consecutive quads (4 verts each) as triangles.
+void Shader3D_DrawQuadArray(int nQuads) {
+	if (!CoreShaders.ready || a3d.pos < 0 || nQuads <= 0) return;
+	std::vector<GLushort> idx;
+	idx.reserve(nQuads * 6);
+	for (int q = 0; q < nQuads; q++) {
+		GLushort b = (GLushort)(q * 4);
+		idx.push_back(b); idx.push_back(b + 1); idx.push_back(b + 2);
+		idx.push_back(b); idx.push_back(b + 2); idx.push_back(b + 3);
+	}
+	glDrawElements(GL_TRIANGLES, nQuads * 6, GL_UNSIGNED_SHORT, idx.data());
+}
+
 void Shader3D_End() {
 	if (!CoreShaders.ready) return;
-	if (a3d.pos >= 0)    pglDisableVertexAttribArray(a3d.pos);
-	if (a3d.normal >= 0) pglDisableVertexAttribArray(a3d.normal);
-	if (a3d.color >= 0)  pglDisableVertexAttribArray(a3d.color);
+	if (a3d.pos >= 0)      pglDisableVertexAttribArray(a3d.pos);
+	if (a3d.normal >= 0)   pglDisableVertexAttribArray(a3d.normal);
+	if (a3d.color >= 0)    pglDisableVertexAttribArray(a3d.color);
+	if (a3d.texcoord >= 0) pglDisableVertexAttribArray(a3d.texcoord);
 	if (pglUseProgram) pglUseProgram(0);
 }

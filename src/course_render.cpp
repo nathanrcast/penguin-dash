@@ -23,6 +23,7 @@ GNU General Public License for more details.
 #include "course_render.h"
 #include "course.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "quadtree.h"
 #include "particles.h"
 #include "env.h"
@@ -60,6 +61,12 @@ void DrawTrees() {
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	set_material(colWhite, colBlack, 1.0);
 
+	// GLES2: billboards through the 3D shader. Snapshot env + base proj/view
+	// once; each object supplies a model matrix (translate, replacing
+	// glPushMatrix/glTranslate) and draws its quads as triangles. The TREES
+	// render mode's alpha test is reproduced as a discard in the shader.
+	Shader3D_Begin3D();
+
 	// Trees
 	for (std::size_t i = 0; i< Course.CollArr.size(); i++) {
 		if (clip_course) {
@@ -72,13 +79,19 @@ void DrawTrees() {
 			Course.ObjTypes[tree_type].texture->Bind();
 		}
 
-		glPushMatrix();
-		glTranslate(Course.CollArr[i].pt);
-		if (param.perf_level > 1) glRotatef(1, 0, 1, 0);
+		TMatrix<4, 4> model, trans;
+		trans.SetTranslationMatrix(Course.CollArr[i].pt.x, Course.CollArr[i].pt.y, Course.CollArr[i].pt.z);
+		if (param.perf_level > 1) {
+			TMatrix<4, 4> rot;
+			rot.SetRotationMatrix(1, 'y');
+			model = trans * rot;
+		} else {
+			model = trans;
+		}
+		Shader3D_SetModel3D(model);
 
 		float treeRadius = Course.CollArr[i].diam / 2.0;
 		float treeHeight = Course.CollArr[i].height;
-		glNormal3i(0, 0, 1);
 
 		static const GLshort tex[] = {
 			0, 1,
@@ -102,17 +115,8 @@ void DrawTrees() {
 			    0.0,         treeHeight, -treeRadius
 		    };
 
-		glEnableClientState(GL_VERTEX_ARRAY);
-		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-		glVertexPointer(3, GL_FLOAT, 0, vtx);
-		glTexCoordPointer(2, GL_SHORT, 0, tex);
-		glDrawArrays(GL_QUADS, 0, 8);
-
-		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-		glDisableClientState(GL_VERTEX_ARRAY);
-
-		glPopMatrix();
+		Shader3D_SetObjectArrays(vtx, tex, 0.f, 0.f, 1.f);
+		Shader3D_DrawQuadArray(2); // 8 verts = 2 crossed quads
 	}
 
 	// Items
@@ -130,8 +134,10 @@ void DrawTrees() {
 			item_type->texture->Bind();
 		}
 
-		glPushMatrix();
-		glTranslate(Course.NocollArr[i].pt);
+		TMatrix<4, 4> model;
+		model.SetTranslationMatrix(Course.NocollArr[i].pt.x, Course.NocollArr[i].pt.y, Course.NocollArr[i].pt.z);
+		Shader3D_SetModel3D(model);
+
 		double itemRadius = Course.NocollArr[i].diam / 2;
 		double itemHeight = Course.NocollArr[i].height;
 
@@ -142,7 +148,8 @@ void DrawTrees() {
 			normal = ctrl->viewpos - Course.NocollArr[i].pt;
 			normal.Norm();
 		}
-		glNormal3(normal);
+		// full normal drives lighting; a flattened copy orients the billboard
+		float lnx = normal.x, lny = normal.y, lnz = normal.z;
 		normal.y = 0.0;
 		normal.Norm();
 
@@ -168,15 +175,10 @@ void DrawTrees() {
 			static_cast<GLfloat>(itemHeight),
 			static_cast<GLfloat>(itemRadius*normal.x)
 		};
-		glEnableClientState(GL_VERTEX_ARRAY);
-		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 
-		glVertexPointer(3, GL_FLOAT, 0, vtx);
-		glTexCoordPointer(2, GL_SHORT, 0, tex);
-		glDrawArrays(GL_QUADS, 0, 4);
-
-		glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-		glDisableClientState(GL_VERTEX_ARRAY);
-		glPopMatrix();
+		Shader3D_SetObjectArrays(vtx, tex, lnx, lny, lnz);
+		Shader3D_DrawQuadArray(1); // 4 verts = 1 quad
 	}
+
+	Shader3D_End();
 }

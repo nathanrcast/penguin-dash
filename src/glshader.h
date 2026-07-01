@@ -73,6 +73,17 @@ void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, in
 void Shader3D_SyncFog();
 // glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, indices) through the program.
 void Shader3D_DrawElementsU32(unsigned int count, const unsigned int* indices);
+
+// Object/billboard path (trees, items). Begin3D snapshots the env + base
+// proj/view once; SetModel3D applies a per-object model (view*model), replacing
+// the fixed-function glPushMatrix/glTranslate/glRotate. SetObjectArrays binds
+// float-xyz positions + short-st texcoords + a constant normal. DrawQuadArray
+// draws nQuads consecutive quads (4 verts each) as triangles (no GL_QUADS in GLES2).
+void Shader3D_Begin3D();
+void Shader3D_SetModel3D(const TMatrix<4, 4>& model);
+void Shader3D_SetObjectArrays(const float* pos, const short* tex, float nx, float ny, float nz);
+void Shader3D_DrawQuadArray(int nQuads);
+
 // Disable the attrib arrays and restore the fixed-function pipeline.
 void Shader3D_End();
 
