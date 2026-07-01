@@ -80,7 +80,7 @@ class CTexture {
 private:
 	std::vector<TTexture*> CommonTex;
 
-	void DrawNumChr(char c, int x, int y, int w, int h);
+	void DrawNumChr(char c, int x, int y, int w, int h, const sf::Color& col);
 public:
 	CTexture();
 	~CTexture();

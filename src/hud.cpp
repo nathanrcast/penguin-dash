@@ -21,6 +21,7 @@ GNU General Public License for more details.
 
 #include "hud.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "textures.h"
 #include "spx.h"
 #include "particles.h"
@@ -30,6 +31,7 @@ GNU General Public License for more details.
 #include "winsys.h"
 #include "game_ctrl.h"
 #include <algorithm>
+#include <vector>
 
 
 #define GAUGE_IMG_SIZE 128
@@ -52,7 +54,6 @@ GNU General Public License for more details.
 static const GLubyte energy_background_color[]   = { 51,  51,  51, 0 };
 static const GLubyte energy_foreground_color[]   = { 138, 150, 255, 128 };
 static const GLubyte speedbar_background_color[] = { 51,  51,  51, 0 };
-static const GLubyte hud_white[]                 = { 255, 255, 255, 255 };
 
 static void draw_time(double time, sf::Color color) {
 	Tex.Draw(T_TIME, 10, 10, 1);
@@ -100,7 +101,10 @@ TVector2d calc_new_fan_pt(double angle) {
 	           ENERGY_GAUGE_CENTER_Y + std::sin(ANGLES_TO_RADIANS(angle)) * SPEEDBAR_OUTER_RADIUS);
 }
 
-void draw_partial_tri_fan(double fraction) {
+// GLES2: build the fan as a vertex array through the 2D shader. Texcoords
+// reproduce the old glTexGen object planes (s = x/128, t = y/128). Caller must
+// have an active Shader2D pass with the gauge model transform + speed texture bound.
+void draw_partial_tri_fan(double fraction, const sf::Color& col) {
 	double angle = SPEEDBAR_BASE_ANGLE +
 	               (SPEEDBAR_MAX_ANGLE - SPEEDBAR_BASE_ANGLE) * fraction;
 
@@ -108,67 +112,79 @@ void draw_partial_tri_fan(double fraction) {
 	double cur_angle = SPEEDBAR_BASE_ANGLE;
 	double angle_incr = 360.0 / CIRCLE_DIVISIONS;
 
-	glBegin(GL_TRIANGLE_FAN);
-	glVertex2f(ENERGY_GAUGE_CENTER_X,
-	           ENERGY_GAUGE_CENTER_Y);
+	std::vector<float> pos, uv;
+	auto push = [&](double px, double py) {
+		pos.push_back((float)px);
+		pos.push_back((float)py);
+		uv.push_back((float)(px / GAUGE_IMG_SIZE));
+		uv.push_back((float)(py / GAUGE_IMG_SIZE));
+	};
+
+	push(ENERGY_GAUGE_CENTER_X, ENERGY_GAUGE_CENTER_Y);
 
 	for (int i=0; i<divs; i++) {
 		TVector2d pt = calc_new_fan_pt(cur_angle);
-		glVertex2f(pt.x, pt.y);
+		push(pt.x, pt.y);
 		cur_angle -= angle_incr;
 	}
 
 	if (cur_angle+angle_incr > angle + EPS) {
 		cur_angle = angle;
 		TVector2d pt = calc_new_fan_pt(cur_angle);
-		glVertex2f(pt.x, pt.y);
+		push(pt.x, pt.y);
 	}
 
-	glEnd();
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, pos.data(), uv.data(), (int)(pos.size() / 2), true, col);
 }
 
 void draw_gauge(double speed, double energy) {
-	static const GLfloat xplane[4] = {1.f / GAUGE_IMG_SIZE, 0.f, 0.f, 0.f };
-	static const GLfloat yplane[4] = {0.f, 1.f / GAUGE_IMG_SIZE, 0.f, 0.f };
-
 	ScopedRenderMode rm(GAUGE_BARS);
 
 	if (Tex.GetTexture(GAUGE_ENERGY) == nullptr) return;
 	if (Tex.GetTexture(GAUGE_SPEED) == nullptr) return;
 	if (Tex.GetTexture(GAUGE_OUTLINE) == nullptr) return;
 
-	Tex.BindTex(GAUGE_ENERGY);
-	glTexGenfv(GL_S, GL_OBJECT_PLANE, xplane);
-	glTexGenfv(GL_T, GL_OBJECT_PLANE, yplane);
+	// GLES2 path: shader-driven, gauge translated to the bottom-right corner via
+	// a model transform (replaces glPushMatrix/glTranslatef). Texcoords are the
+	// old glTexGen object planes computed inline (s = x/128, t = y/128).
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
+	TMatrix<4, 4> model;
+	model.SetTranslationMatrix(Winsys.resolution.width - GAUGE_WIDTH, 0, 0);
+	Shader2D_SetModel(model);
 
-	glPushMatrix();
-	glTranslatef(Winsys.resolution.width - GAUGE_WIDTH, 0, 0);
 	Tex.BindTex(GAUGE_ENERGY);
 	float y = ENERGY_GAUGE_BOTTOM + energy * ENERGY_GAUGE_HEIGHT;
+	const float yt = y / GAUGE_IMG_SIZE;
 
-	const GLfloat vtx1 [] = {
+	const float vtx1 [] = {
 		0.f, y,
 		GAUGE_IMG_SIZE, y,
 		GAUGE_IMG_SIZE, GAUGE_IMG_SIZE,
 		0.f, GAUGE_IMG_SIZE
 	};
-	const GLfloat vtx2 [] = {
+	const float uv1 [] = {
+		0.f, yt,
+		1.f, yt,
+		1.f, 1.f,
+		0.f, 1.f
+	};
+	const float vtx2 [] = {
 		0.f, 0.f,
 		GAUGE_IMG_SIZE, 0.f,
 		GAUGE_IMG_SIZE, y,
 		0.f, y
 	};
-	glEnableClientState(GL_VERTEX_ARRAY);
+	const float uv2 [] = {
+		0.f, 0.f,
+		1.f, 0.f,
+		1.f, yt,
+		0.f, yt
+	};
 
-	glColor4ubv(energy_background_color);
-	glVertexPointer(2, GL_FLOAT, 0, vtx1);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glColor4ubv(energy_foreground_color);
-	glVertexPointer(2, GL_FLOAT, 0, vtx2);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx1, uv1, 4, true,
+	                    sf::Color(energy_background_color[0], energy_background_color[1], energy_background_color[2], energy_background_color[3]));
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx2, uv2, 4, true,
+	                    sf::Color(energy_foreground_color[0], energy_foreground_color[1], energy_foreground_color[2], energy_foreground_color[3]));
 
 	double speedbar_frac = 0.0;
 
@@ -191,27 +207,26 @@ void draw_gauge(double speed, double energy) {
 		speedbar_frac +=  speed/SPEEDBAR_GREEN_MAX_SPEED * SPEEDBAR_GREEN_FRACTION;
 	}
 
-	glColor4ubv(speedbar_background_color);
 	Tex.BindTex(GAUGE_SPEED);
-	draw_partial_tri_fan(1.0);
-	glColor4ubv(hud_white);
-	draw_partial_tri_fan(std::min(1.0, speedbar_frac));
+	draw_partial_tri_fan(1.0, sf::Color(speedbar_background_color[0], speedbar_background_color[1], speedbar_background_color[2], speedbar_background_color[3]));
+	draw_partial_tri_fan(std::min(1.0, speedbar_frac), sf::Color::White);
 
-	glColor4ubv(hud_white);
 	Tex.BindTex(GAUGE_OUTLINE);
-	static const GLshort vtx3 [] = {
-		0, 0,
-		GAUGE_IMG_SIZE, 0,
+	static const float vtx3 [] = {
+		0.f, 0.f,
+		GAUGE_IMG_SIZE, 0.f,
 		GAUGE_IMG_SIZE, GAUGE_IMG_SIZE,
-		0, GAUGE_IMG_SIZE
+		0.f, GAUGE_IMG_SIZE
 	};
-	glEnableClientState(GL_VERTEX_ARRAY);
+	static const float uv3 [] = {
+		0.f, 0.f,
+		1.f, 0.f,
+		1.f, 1.f,
+		0.f, 1.f
+	};
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx3, uv3, 4, true, sf::Color::White);
 
-	glVertexPointer(2, GL_SHORT, 0, vtx3);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glPopMatrix();
+	Shader2D_End();
 }
 
 void DrawSpeed(double speed) {
@@ -234,7 +249,6 @@ void DrawWind(float dir, float speed, const CControl *ctrl) {
 	static const int texWidth = Tex.GetSFTexture(SPEEDMETER).getSize().x;
 
 	Tex.Draw(SPEEDMETER, 5, Winsys.resolution.height-5-texHeight, 1.0);
-	glDisable(GL_TEXTURE_2D);
 
 
 	float alpha, red, blue;
@@ -247,38 +261,37 @@ void DrawWind(float dir, float speed, const CControl *ctrl) {
 	}
 	blue = 1.f - red;
 
-	glPushMatrix();
-	glColor4f(red, 0, blue, alpha);
-	glTranslatef(5 + texWidth / 2, 5 + texHeight / 2, 0);
-	glRotatef(dir, 0, 0, 1);
-	glEnableClientState(GL_VERTEX_ARRAY);
+	// GLES2: untextured colored arrows through the 2D shader. Model transform
+	// replaces glTranslatef/glRotatef; z-rotations about the same axis compose
+	// additively, so the direction indicator uses translate * rotZ(dir_angle).
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
+	TMatrix<4, 4> trans, rot;
+	trans.SetTranslationMatrix(5 + texWidth / 2, 5 + texHeight / 2, 0);
+
 	static const int len = 45;
-	static const GLshort vtx1 [] = {
-		-5, 0,
-		    5, 0,
-		    5, -len,
-		    - 5, -len
-	    };
-	glVertexPointer(2, GL_SHORT, 0, vtx1);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+	static const float vtx1 [] = {
+		-5.f, 0.f,
+		 5.f, 0.f,
+		 5.f, -len,
+		-5.f, -len
+	};
+	rot.SetRotationMatrix(dir, 'z');
+	Shader2D_SetModel(trans * rot);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx1, nullptr, 4, false, sf::Color(255 * red, 0, 255 * blue, 255 * alpha));
 
 	// direction indicator
 	float dir_angle = RADIANS_TO_ANGLES(std::atan2(ctrl->cvel.x, ctrl->cvel.z));
 
-	glColor4f(0, 0.5, 0, 1.0);
-	glRotatef(dir_angle - dir, 0, 0, 1);
-	static const GLshort vtx2 [] = {
-		-2, 0,
-		    2, 0,
-		    2, -50,
-		    -2, -50
-	    };
-	glVertexPointer(2, GL_SHORT, 0, vtx2);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glPopMatrix();
-
-	glEnable(GL_TEXTURE_2D);
+	static const float vtx2 [] = {
+		-2.f, 0.f,
+		 2.f, 0.f,
+		 2.f, -50.f,
+		-2.f, -50.f
+	};
+	rot.SetRotationMatrix(dir_angle, 'z');
+	Shader2D_SetModel(trans * rot);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx2, nullptr, 4, false, sf::Color(0, 128, 0, 255));
+	Shader2D_End();
 
 	Tex.Draw(SPEED_KNOB, 5 + texWidth / 2 - 8, Winsys.resolution.height - 5 - texWidth / 2 - 8, 1.0);
 	std::string windstr = Int_StrN((int)speed, 3);
@@ -327,30 +340,23 @@ void DrawFps() {
 
 void DrawPercentBar(float fact, float x, float y) {
 	Tex.BindTex(T_ENERGY_MASK);
-	glColor4f(1.0, 1.0, 1.0, 1.0);
 
-	const GLfloat tex[] = {
-		0, 1,
-		1, 1,
-		1, 1 - fact,
-		0, 1 - fact
+	const float tex[] = {
+		0.f, 1.f,
+		1.f, 1.f,
+		1.f, 1.f - fact,
+		0.f, 1.f - fact
 	};
-	const GLfloat vtx[] = {
+	const float vtx[] = {
 		x, y,
 		x + 32, y,
 		x + 32, y + fact * 128,
 		x, y + fact * 128
 	};
 
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-	glVertexPointer(2, GL_FLOAT, 0, vtx);
-	glTexCoordPointer(2, GL_FLOAT, 0, tex);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, tex, 4, true, sf::Color::White);
+	Shader2D_End();
 }
 
 void DrawCoursePosition(const CControl *ctrl) {

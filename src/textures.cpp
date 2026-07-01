@@ -231,7 +231,7 @@ void CTexture::DrawFrame(std::size_t idx, int x, int y, double w, double h, int 
 
 // -------------------------- numeric strings -------------------------
 
-void CTexture::DrawNumChr(char c, int x, int y, int w, int h) {
+void CTexture::DrawNumChr(char c, int x, int y, int w, int h, const sf::Color& col) {
 	int idx;
 	if (std::isdigit((unsigned char)c))
 		idx = c - '0';
@@ -247,26 +247,24 @@ void CTexture::DrawNumChr(char c, int x, int y, int w, int h) {
 	float texleft = idx * texw;
 	float texright = (idx + 1) * texw;
 
-	const GLfloat tex[] = {
-		texleft, 1,
-		texright, 1,
-		texright, 0,
-		texleft, 0
+	const float uv[] = {
+		texleft, 1.f,
+		texright, 1.f,
+		texright, 0.f,
+		texleft, 0.f
 	};
-	const GLfloat vtx[] = {
-		static_cast<GLfloat>(x),
-		static_cast<GLfloat>(Winsys.resolution.height - y - h),
-		static_cast<GLfloat>(x + w * 0.9f),
-		static_cast<GLfloat>(Winsys.resolution.height - y - h),
-		static_cast<GLfloat>(x + w * 0.9f),
-		static_cast<GLfloat>(Winsys.resolution.height - y),
-		static_cast<GLfloat>(x),
-		static_cast<GLfloat>(Winsys.resolution.height - y)
+	const float vtx[] = {
+		static_cast<float>(x),
+		static_cast<float>(Winsys.resolution.height - y - h),
+		static_cast<float>(x + w * 0.9f),
+		static_cast<float>(Winsys.resolution.height - y - h),
+		static_cast<float>(x + w * 0.9f),
+		static_cast<float>(Winsys.resolution.height - y),
+		static_cast<float>(x),
+		static_cast<float>(Winsys.resolution.height - y)
 	};
 
-	glVertexPointer(2, GL_FLOAT, 0, vtx);
-	glTexCoordPointer(2, GL_FLOAT, 0, tex);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, uv, 4, true, col);
 }
 
 void CTexture::DrawNumStr(const std::string& s, int x, int y, float size, const sf::Color& col) {
@@ -279,12 +277,9 @@ void CTexture::DrawNumStr(const std::string& s, int x, int y, float size, const 
 	int qw = (int)(22 * size);
 	int qh = (int)(32 * size);
 
-	glColor(col);
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
 	for (std::size_t i=0; i < s.size(); i++) {
-		DrawNumChr(s[i], x + (int)i*qw, y, qw, qh);
+		DrawNumChr(s[i], x + (int)i*qw, y, qw, qh, col);
 	}
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader2D_End();
 }

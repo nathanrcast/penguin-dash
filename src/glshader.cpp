@@ -249,6 +249,7 @@ void InitCoreShaders() {
 static GLint a2d_pos = -1, a2d_uv = -1, a2d_col = -1;
 static GLint u2d_mvp = -1, u2d_useTex = -1, u2d_tex = -1;
 static bool  a2d_cached = false;
+static TMatrix<4, 4> g_ortho2d; // current 2D projection; SetModel composes onto it
 
 void Shader2D_Begin(float screenW, float screenH) {
 	if (!CoreShaders.ready) return;
@@ -263,11 +264,19 @@ void Shader2D_Begin(float screenW, float screenH) {
 		a2d_cached = true;
 	}
 	// Match legacy Setup2dScene: glOrtho(0, w, 0, h, -1, 1), origin bottom-left.
-	TMatrix<4, 4> ortho = MakeOrtho(0, screenW, 0, screenH, -1, 1);
+	g_ortho2d = MakeOrtho(0, screenW, 0, screenH, -1, 1);
 	float m[16];
-	MatrixToGL(ortho, m);
+	MatrixToGL(g_ortho2d, m);
 	pglUniformMatrix4fv(u2d_mvp, 1, GL_FALSE, m);
 	pglUniform1i(u2d_tex, 0);
+}
+
+void Shader2D_SetModel(const TMatrix<4, 4>& model) {
+	if (!CoreShaders.ready || u2d_mvp < 0) return;
+	TMatrix<4, 4> mvp = g_ortho2d * model; // column-major: mvp*v = ortho*(model*v)
+	float m[16];
+	MatrixToGL(mvp, m);
+	pglUniformMatrix4fv(u2d_mvp, 1, GL_FALSE, m);
 }
 
 void Shader2D_DrawArrays(unsigned int mode, const float* pos2, const float* uv2,
