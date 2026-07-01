@@ -76,8 +76,13 @@ Develop against a **GL 2.1 / GLES2-compatible subset** on desktop (SFML currentl
 context in `winsys.cpp:101/103` — bump it), so each milestone is testable on `.13` before the Android
 context switch.
 
-- **M0 – Scaffolding:** shader manager + the two base shaders; software matrix stack + Ortho/Perspective/
-  LookAt; retarget `glLoadMatrix`. No visual change.
+- **M0 – Scaffolding:** ✅ **DONE 2026-07-01** (commit `bebff48`). `glshader.{h,cpp}` (GLSL program
+  wrapper + GL2.0 entry points loaded via `sf::Context::getFunction` + core 2D/3D shaders) and
+  `glmatrix.{h,cpp}` (Ortho/Perspective/LookAt builders + software matrix stack, column-major to match
+  `TMatrix`). `InitCoreShaders()` called from `main` after GL init; GL context bumped 1.2→2.1. Shaders
+  are compiled+linked but **not bound** → zero visual change. Verified on `.13`: build clean (no
+  warnings), and a windowed smoke run logged *"core 2D/3D shaders compiled + linked OK"* on the live
+  GL context. (`Makefile.in` hand-updated alongside `Makefile.am` — no autotools installed.)
 - **M1 – 2D pipeline:** `Setup2dScene` + `textures.cpp` + `hud.cpp` (incl. gauge fan) + `font.cpp` →
   2D shader. **First visual proof: menus + HUD render.**
 - **M2 – Terrain:** `course_render.cpp` arrays → VBO + 3D shader (light+fog). Course renders.
