@@ -89,6 +89,8 @@ void Shader3D_DrawQuadArray(int nQuads);
 // (fog plane gradient). DrawArrays draws the bound arrays with any GL mode.
 void Shader3D_SetTexturedArray(const void* pos, unsigned int posType, const float* tex, const sf::Color& col);
 void Shader3D_SetColoredArray(const float* pos, const unsigned char* color);
+// Unlit geometry with one constant colour (Tux shadow).
+void Shader3D_SetPositionColorArray(const float* pos, const sf::Color& col);
 void Shader3D_DrawArrays(unsigned int mode, int count);
 
 // Character (M4): explicit material + lit untextured mesh (Tux spheres).

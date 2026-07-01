@@ -602,6 +602,20 @@ void Shader3D_SetColoredArray(const float* pos, const unsigned char* color) {
 	if (a3d.texcoord >= 0) pglDisableVertexAttribArray(a3d.texcoord);
 }
 
+// Unlit primitive with a constant colour. Used by the projected Tux shadow:
+// positions are already in world space and TUX_SHADOW has lighting/texture off.
+void Shader3D_SetPositionColorArray(const float* pos, const sf::Color& col) {
+	if (!CoreShaders.ready) return;
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, 0, pos);
+	if (a3d.normal >= 0)   pglDisableVertexAttribArray(a3d.normal);
+	if (a3d.texcoord >= 0) pglDisableVertexAttribArray(a3d.texcoord);
+	if (a3d.color >= 0) {
+		pglDisableVertexAttribArray(a3d.color);
+		pglVertexAttrib4f(a3d.color, col.r / 255.f, col.g / 255.f, col.b / 255.f, col.a / 255.f);
+	}
+}
+
 void Shader3D_DrawArrays(unsigned int mode, int count) {
 	if (!CoreShaders.ready || a3d.pos < 0) return;
 	glDrawArrays(mode, 0, count);

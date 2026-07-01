@@ -681,25 +681,36 @@ bool CCharShape::Collision(const TVector3d& pos, const TPolyhedron& ph) {
 //				shadow
 // --------------------------------------------------------------------
 
-void CCharShape::DrawShadowVertex(double x, double y, double z, const TMatrix<4, 4>& mat) const {
+TVector3d CCharShape::DrawShadowVertex(double x, double y, double z, const TMatrix<4, 4>& mat) const {
 	TVector3d pt(x, y, z);
 	pt = TransformPoint(mat, pt);
 	double old_y = pt.y;
-	TVector3d nml = Course.FindCourseNormal(pt.x, pt.z);
 	pt.y = Course.FindYCoord(pt.x, pt.z) + SHADOW_HEIGHT;
 	if (pt.y > old_y) pt.y = old_y;
-	glNormal3(nml);
-	glVertex3(pt);
+	return pt;
 }
 
 void CCharShape::DrawShadowSphere(const TMatrix<4, 4>& mat) const {
 	double theta, phi, d_theta, d_phi, eps, twopi;
 	double x, y, z;
-	int div = param.tux_shadow_sphere_divisions;
+	int div = std::max(2, param.tux_shadow_sphere_divisions);
 
 	eps = 1e-15;
 	twopi = M_PI * 2.0;
 	d_theta = d_phi = M_PI / div;
+	std::vector<float> pos;
+	pos.reserve(4 * div + 2);
+	auto add_shadow_vertex = [&](double vx, double vy, double vz) {
+		TVector3d pt = DrawShadowVertex(vx, vy, vz, mat);
+		pos.push_back((float)pt.x);
+		pos.push_back((float)pt.y);
+		pos.push_back((float)pt.z);
+	};
+	auto draw_shadow_array = [&](GLenum mode) {
+		Shader3D_SetPositionColorArray(pos.data(), shad_col);
+		Shader3D_DrawArrays(mode, (int)(pos.size() / 3));
+		pos.clear();
+	};
 
 	for (phi = 0.0; phi + eps < M_PI; phi += d_phi) {
 		double cos_theta, sin_theta;
@@ -712,8 +723,7 @@ void CCharShape::DrawShadowSphere(const TMatrix<4, 4>& mat) const {
 		cos_phi_d_phi = std::cos(phi + d_phi);
 
 		if (phi <= eps) {
-			glBegin(GL_TRIANGLE_FAN);
-			DrawShadowVertex(0., 0., 1., mat);
+			add_shadow_vertex(0., 0., 1.);
 
 			for (theta = 0.0; theta + eps < twopi; theta += d_theta) {
 				sin_theta = std::sin(theta);
@@ -722,53 +732,51 @@ void CCharShape::DrawShadowSphere(const TMatrix<4, 4>& mat) const {
 				x = cos_theta * sin_phi_d_phi;
 				y = sin_theta * sin_phi_d_phi;
 				z = cos_phi_d_phi;
-				DrawShadowVertex(x, y, z, mat);
+				add_shadow_vertex(x, y, z);
 			}
 			x = sin_phi_d_phi;
 			y = 0.0;
 			z = cos_phi_d_phi;
-			DrawShadowVertex(x, y, z, mat);
-			glEnd();
+			add_shadow_vertex(x, y, z);
+			draw_shadow_array(GL_TRIANGLE_FAN);
 		} else if (phi + d_phi + eps >= M_PI) {
-			glBegin(GL_TRIANGLE_FAN);
-			DrawShadowVertex(0., 0., -1., mat);
+			add_shadow_vertex(0., 0., -1.);
 			for (theta = twopi; theta - eps > 0; theta -= d_theta) {
 				sin_theta = std::sin(theta);
 				cos_theta = std::cos(theta);
 				x = cos_theta * sin_phi;
 				y = sin_theta * sin_phi;
 				z = cos_phi;
-				DrawShadowVertex(x, y, z, mat);
+				add_shadow_vertex(x, y, z);
 			}
 			x = sin_phi;
 			y = 0.0;
 			z = cos_phi;
-			DrawShadowVertex(x, y, z, mat);
-			glEnd();
+			add_shadow_vertex(x, y, z);
+			draw_shadow_array(GL_TRIANGLE_FAN);
 		} else {
-			glBegin(GL_TRIANGLE_STRIP);
 			for (theta = 0.0; theta + eps < twopi; theta += d_theta) {
 				sin_theta = std::sin(theta);
 				cos_theta = std::cos(theta);
 				x = cos_theta * sin_phi;
 				y = sin_theta * sin_phi;
 				z = cos_phi;
-				DrawShadowVertex(x, y, z, mat);
+				add_shadow_vertex(x, y, z);
 
 				x = cos_theta * sin_phi_d_phi;
 				y = sin_theta * sin_phi_d_phi;
 				z = cos_phi_d_phi;
-				DrawShadowVertex(x, y, z, mat);
+				add_shadow_vertex(x, y, z);
 			}
 			x = sin_phi;
 			y = 0.0;
 			z = cos_phi;
-			DrawShadowVertex(x, y, z, mat);
+			add_shadow_vertex(x, y, z);
 			x = sin_phi_d_phi;
 			y = 0.0;
 			z = cos_phi_d_phi;
-			DrawShadowVertex(x, y, z, mat);
-			glEnd();
+			add_shadow_vertex(x, y, z);
+			draw_shadow_array(GL_TRIANGLE_STRIP);
 		}
 	}
 }
@@ -789,14 +797,18 @@ void CCharShape::DrawShadow() const {
 	if (g_game.light_id == 1 || g_game.light_id == 3) return;
 
 	ScopedRenderMode rm(TUX_SHADOW);
-	glColor(shad_col);
 
 	const TCharNode *node = GetNode(0);
 	if (node == nullptr) {
 		Message("couldn't find tux's root node");
 		return;
 	}
+	Shader3D_Begin3D();
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	Shader3D_SetModel3D(id); // shadow verts are projected into world space
 	TraverseDagForShadow(node, TMatrix<4, 4>::getIdentity());
+	Shader3D_End();
 }
 
 // --------------------------------------------------------------------

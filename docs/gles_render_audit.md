@@ -16,7 +16,8 @@ The "~76 immediate-mode GL sites" headline overstated it. Reality:
   uniforms — the math already exists.
 - **Vertex arrays are already the norm** (`glVertexPointer` 23, `glTexCoordPointer` 11,
   `glEnableClientState` 29, `glDrawArrays` 22). These convert mechanically to VBO + `glVertexAttribPointer`.
-- **True immediate mode is only 7 `glBegin` blocks** (localized, simple primitives).
+- **True immediate mode was only 7 `glBegin` blocks at audit time** (localized, simple primitives).
+  After M1/M3/M4b, the remaining true immediate mode is the 2 `track_marks.cpp` blocks.
 - Pipeline is **pure fixed-function — no shaders yet**, so we introduce the first shaders (2–3 small ones).
 
 Net: a concentrated, mostly-mechanical rewrite across ~8–10 files, with the real design work
@@ -34,7 +35,7 @@ front-loaded into getting the shaders + software matrix stack right (M0–M2 bel
 | `font.cpp` | Text | (SFML text + GL) | 2D shader path |
 | `particles.cpp` | Snow particles | arrays | 3D/point shader; verify blend |
 | `track_marks.cpp` | Ski trail decals on snow | 2× `glBegin` (QUADS, QUAD_STRIP) | 3D shader; convert; verify blend |
-| `tux.cpp` | Character model | **`gluSphere` quadrics** + 3× `glBegin` fans/strips | generate sphere meshes; convert fans |
+| `tux.cpp` | Character model | generated sphere mesh + shader shadow arrays | GLU/header cleanup later |
 | `tools*.cpp`, `ogl_test.cpp`, `quadtree.cpp` | Editor tools / test / spatial | `gluLookAt`, misc | low priority / last |
 
 ## GLES2 incompatibilities & exact sites
@@ -42,8 +43,8 @@ front-loaded into getting the shaders + software matrix stack right (M0–M2 bel
 1. **Fixed-function transforms** — `ogl.cpp:166–181` (`glMatrixMode`/`glLoadIdentity`), `ogl.cpp:437`
    (`glLoadMatrixd`), `view.cpp:156/170` (`glLoadMatrix`). → software proj/modelview from `TMatrix`,
    upload MVP (+ normal matrix) as uniforms.
-2. **Immediate mode (7 `glBegin`)** — `env.cpp:351`, `hud.cpp:111`, `track_marks.cpp:117/138`,
-   `tux.cpp:672/690/706`. → build vertex arrays / use the batching shim (below).
+2. **Immediate mode (initially 7 `glBegin`)** — `env.cpp`, `hud.cpp`, and `tux.cpp` are now converted;
+   remaining: `track_marks.cpp:117/138`. → build vertex arrays / use the batching shim (below).
 3. **Client-state vertex arrays** (`glEnableClientState`/`glVertexPointer`/`glTexCoordPointer`/
    `glNormalPointer` + `glDrawArrays`) — bulk, across terrain/env/particles/textures. → VBO +
    generic vertex attribs. Mechanical.
@@ -114,10 +115,11 @@ context switch.
   generated cached unit-sphere mesh (pos == normal); `DrawNodes` accumulates the model matrix in
   software (`parentModel * node->trans`, no matrix stack) → `Shader3D_SetModel3D`; per-node material via
   `Shader3D_SetMaterial` (+ specular term). Verified: Tux solid, correctly lit, joints animate.
-- **M4b – Character shadow:** TODO. `DrawShadow`/`DrawShadowSphere` (3 `glBegin` fans/strips at
-  `tux.cpp:672/690/706` + stencil, TUX_SHADOW mode, perf_level>2 default) still fixed-function
-  (renders on GL 2.1). Convert the glBegin sphere to arrays; decide stencil handling for GLES2.
-- **M5 – Decals & snow:** `track_marks.cpp` (2 `glBegin`) + `particles.cpp`; verify blend/alpha states.
+- **M4b – Character shadow:** ✅ **DONE 2026-07-01.** `DrawShadowSphere` now projects the old fan/strip
+  sphere vertices into arrays and draws them through the core 3D shader with constant shadow colour
+  (`Shader3D_SetPositionColorArray`). Existing `TUX_SHADOW` render-mode stencil state is preserved;
+  GLES2 supports this path as long as the Android surface requests a stencil buffer.
+- **M5 – Decals & snow:** `track_marks.cpp` (2 remaining `glBegin`) + `particles.cpp`; verify blend/alpha states.
 - **M6 – Cleanup:** drop `glShadeModel`; `glAlphaFunc`→`discard`; remaining GLU; editor tools last;
   remove desktop-GL-only headers. **Full desktop GLES2 build green.**
 
