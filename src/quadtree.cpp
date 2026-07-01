@@ -7,6 +7,7 @@
 #include "textures.h"
 #include "course.h"
 #include "ogl.h"
+#include "glshader.h"
 
 #include <climits>
 #include <cstring>
@@ -725,16 +726,11 @@ void quadsquare::InitVert(int i, int x, int z) {
 GLubyte *VNCArray;
 
 void quadsquare::DrawTris() {
-	int tmp_min_idx = VertexArrayMinIdx;
-
-	if (glLockArraysEXT_p) {
-		if (tmp_min_idx == 0) tmp_min_idx = 1;
-		glLockArraysEXT_p(tmp_min_idx, VertexArrayMaxIdx - tmp_min_idx + 1);
-	}
-
-	glDrawElements(GL_TRIANGLES, VertexArrayCounter,
-	               GL_UNSIGNED_INT, VertexArrayIndices);
-	if (glUnlockArraysEXT_p) glUnlockArraysEXT_p();
+	// GLES2: draw through the 3D shader (Shader3D_BeginVNC set up in
+	// RenderQuadtree). Re-sync fog since the env-map pass toggles GL_FOG
+	// between DrawTris calls. Vertex colours are read live from the array.
+	Shader3D_SyncFog();
+	Shader3D_DrawElementsU32(VertexArrayCounter, VertexArrayIndices);
 }
 
 void quadsquare::InitArrayCounters() {
@@ -1127,20 +1123,13 @@ void UpdateQuadtree(const TVector3d& view_pos, float detail) {
 void RenderQuadtree() {
 	GLubyte *vnc_array = Course.GetGLArrays();
 
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glVertexPointer(3, GL_FLOAT, STRIDE_GL_ARRAY, vnc_array);
-
-	glEnableClientState(GL_NORMAL_ARRAY);
-	glNormalPointer(GL_FLOAT, STRIDE_GL_ARRAY,
-	                vnc_array + 4 * sizeof(GLfloat));
-
-	glEnableClientState(GL_COLOR_ARRAY);
-	glColorPointer(4, GL_UNSIGNED_BYTE, STRIDE_GL_ARRAY,
-	               vnc_array + 8 * sizeof(GLfloat));
+	// GLES2: snapshot the fixed-function COURSE state (matrices, light, fog,
+	// material, texgen) and point the 3D shader's generic attribs into the
+	// interleaved VNC buffer (pos @0, normal @4f, colour @8f).
+	Shader3D_BeginVNC(vnc_array, STRIDE_GL_ARRAY,
+	                  0, 4 * sizeof(GLfloat), 8 * sizeof(GLfloat));
 
 	root->Render(root_corner_data, vnc_array);
 
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glDisableClientState(GL_NORMAL_ARRAY);
-	glDisableClientState(GL_COLOR_ARRAY);
+	Shader3D_End();
 }

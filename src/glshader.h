@@ -55,4 +55,25 @@ void Shader2D_DrawArrays(unsigned int mode, const float* pos2, const float* uv2,
 // Restore the fixed-function pipeline (glUseProgram 0) for subsequent legacy/SFML draws.
 void Shader2D_End();
 
+// --- M2: 3D shader draw path (terrain first) ---
+// Desktop-first strategy: rather than intercept every matrix/light/fog call
+// scattered through the engine, we SNAPSHOT the live fixed-function GL state
+// (proj/modelview matrices, light 0, global ambient, material, linear fog,
+// object-linear texgen, enables) via glGet* at draw time and reproduce it in
+// the 3D program. This guarantees a pixel match with the fixed-function
+// pipeline on desktop. On GLES2 (Android) glGet of this state is unavailable,
+// so this snapshot is replaced by tracked matrices/uniforms in a later pass.
+//
+// Begin for an interleaved VNC vertex buffer (position 3f, normal 3f, color
+// 4ub) — the terrain layout. Snapshots state, binds the 3D program, uploads
+// all uniforms, and points the generic attribs into the buffer.
+void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, int colOff);
+// Re-read the dynamic fog enable and re-upload u_useFog (the terrain env-map
+// pass toggles GL_FOG between draws). Cheap; call before each draw.
+void Shader3D_SyncFog();
+// glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, indices) through the program.
+void Shader3D_DrawElementsU32(unsigned int count, const unsigned int* indices);
+// Disable the attrib arrays and restore the fixed-function pipeline.
+void Shader3D_End();
+
 #endif

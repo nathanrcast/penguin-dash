@@ -38,6 +38,11 @@ PFNGLVERTEXATTRIB4FPROC          pglVertexAttrib4f = nullptr;
 PFNGLVERTEXATTRIBPOINTERPROC     pglVertexAttribPointer = nullptr;
 PFNGLENABLEVERTEXATTRIBARRAYPROC pglEnableVertexAttribArray = nullptr;
 PFNGLDISABLEVERTEXATTRIBARRAYPROC pglDisableVertexAttribArray = nullptr;
+// M2 3D path
+PFNGLUNIFORM1FPROC               pglUniform1f = nullptr;
+PFNGLUNIFORM3FVPROC              pglUniform3fv = nullptr;
+PFNGLUNIFORM4FVPROC              pglUniform4fv = nullptr;
+PFNGLUNIFORMMATRIX3FVPROC        pglUniformMatrix3fv = nullptr;
 
 bool g_functionsLoaded = false;
 
@@ -96,6 +101,10 @@ bool InitShaderFunctions() {
 	ok &= load(pglVertexAttribPointer, "glVertexAttribPointer");
 	ok &= load(pglEnableVertexAttribArray, "glEnableVertexAttribArray");
 	ok &= load(pglDisableVertexAttribArray, "glDisableVertexAttribArray");
+	ok &= load(pglUniform1f, "glUniform1f");
+	ok &= load(pglUniform3fv, "glUniform3fv");
+	ok &= load(pglUniform4fv, "glUniform4fv");
+	ok &= load(pglUniformMatrix3fv, "glUniformMatrix3fv");
 	g_functionsLoaded = ok;
 	return ok;
 }
@@ -167,6 +176,11 @@ static const char* FS_2D =
 	"  gl_FragColor = c;\n"
 	"}\n";
 
+// Per-vertex (Gouraud) lighting to match the fixed-function pipeline exactly.
+// Reproduces: GL_COLOR_MATERIAL (vertex color = ambient+diffuse material),
+// single directional light 0 (ambient+diffuse+optional specular, infinite
+// viewer H = normalize(L + z)), object-linear texgen, and linear eye-distance
+// fog — all fed from glGet snapshots.
 static const char* VS_3D =
 	"attribute vec3 a_position;\n"
 	"attribute vec3 a_normal;\n"
@@ -175,54 +189,65 @@ static const char* VS_3D =
 	"uniform mat4 u_mvp;\n"
 	"uniform mat4 u_modelview;\n"
 	"uniform mat3 u_normalMatrix;\n"
-	"varying vec2 v_texcoord;\n"
+	"uniform int u_useLighting;\n"
+	"uniform int u_useColorMaterial;\n"
+	"uniform vec3 u_lightDir;\n"
+	"uniform vec4 u_globalAmbient;\n"
+	"uniform vec4 u_lightAmbient;\n"
+	"uniform vec4 u_lightDiffuse;\n"
+	"uniform vec4 u_lightSpecular;\n"
+	"uniform vec4 u_matAmbient;\n"
+	"uniform vec4 u_matDiffuse;\n"
+	"uniform vec4 u_matSpecular;\n"
+	"uniform float u_shininess;\n"
+	"uniform int u_useTexGen;\n"
+	"uniform vec4 u_texGenS;\n"
+	"uniform vec4 u_texGenT;\n"
+	"uniform int u_useFog;\n"
+	"uniform float u_fogStart;\n"
+	"uniform float u_fogEnd;\n"
 	"varying vec4 v_color;\n"
-	"varying vec3 v_normal;\n"
-	"varying vec3 v_eyePos;\n"
+	"varying vec2 v_texcoord;\n"
+	"varying float v_fog;\n"
 	"void main() {\n"
-	"  v_texcoord = a_texcoord;\n"
-	"  v_color = a_color;\n"
-	"  v_normal = u_normalMatrix * a_normal;\n"
-	"  vec4 ep = u_modelview * vec4(a_position, 1.0);\n"
-	"  v_eyePos = ep.xyz;\n"
-	"  gl_Position = u_mvp * vec4(a_position, 1.0);\n"
+	"  vec4 amb = (u_useColorMaterial != 0) ? a_color : u_matAmbient;\n"
+	"  vec4 dif = (u_useColorMaterial != 0) ? a_color : u_matDiffuse;\n"
+	"  vec4 lit;\n"
+	"  if (u_useLighting != 0) {\n"
+	"    vec3 n = normalize(u_normalMatrix * a_normal);\n"
+	"    vec3 l = normalize(u_lightDir);\n"
+	"    float ndl = max(dot(n, l), 0.0);\n"
+	"    vec3 rgb = amb.rgb * (u_globalAmbient.rgb + u_lightAmbient.rgb)\n"
+	"             + dif.rgb * u_lightDiffuse.rgb * ndl;\n"
+	"    if (u_matSpecular.r + u_matSpecular.g + u_matSpecular.b > 0.0) {\n"
+	"      vec3 h = normalize(l + vec3(0.0, 0.0, 1.0));\n"
+	"      float sp = pow(max(dot(n, h), 0.0), max(u_shininess, 1.0));\n"
+	"      rgb += u_matSpecular.rgb * u_lightSpecular.rgb * sp;\n"
+	"    }\n"
+	"    lit = vec4(rgb, dif.a);\n"
+	"  } else {\n"
+	"    lit = dif;\n"
+	"  }\n"
+	"  v_color = clamp(lit, 0.0, 1.0);\n"
+	"  vec4 p4 = vec4(a_position, 1.0);\n"
+	"  v_texcoord = (u_useTexGen != 0) ? vec2(dot(u_texGenS, p4), dot(u_texGenT, p4)) : a_texcoord;\n"
+	"  float dist = length((u_modelview * p4).xyz);\n"
+	"  v_fog = (u_useFog != 0) ? clamp((u_fogEnd - dist) / (u_fogEnd - u_fogStart), 0.0, 1.0) : 1.0;\n"
+	"  gl_Position = u_mvp * p4;\n"
 	"}\n";
 
 static const char* FS_3D =
 	"uniform sampler2D u_tex;\n"
 	"uniform int u_useTexture;\n"
-	"uniform int u_useLighting;\n"
-	"uniform vec3 u_lightDir;\n"
-	"uniform vec4 u_matSpecular;\n"
-	"uniform float u_shininess;\n"
-	"uniform int u_useFog;\n"
 	"uniform vec4 u_fogColor;\n"
-	"uniform float u_fogNear;\n"
-	"uniform float u_fogFar;\n"
-	"varying vec2 v_texcoord;\n"
 	"varying vec4 v_color;\n"
-	"varying vec3 v_normal;\n"
-	"varying vec3 v_eyePos;\n"
+	"varying vec2 v_texcoord;\n"
+	"varying float v_fog;\n"
 	"void main() {\n"
-	"  vec4 base = v_color;\n"
-	"  if (u_useTexture != 0) base *= texture2D(u_tex, v_texcoord);\n"
-	"  vec3 col = base.rgb;\n"
-	"  if (u_useLighting != 0) {\n"
-	"    vec3 n = normalize(v_normal);\n"
-	"    vec3 l = normalize(u_lightDir);\n"
-	"    float diff = max(dot(n, l), 0.0);\n"
-	"    vec3 viewDir = normalize(-v_eyePos);\n"
-	"    vec3 h = normalize(l + viewDir);\n"
-	"    float spec = pow(max(dot(n, h), 0.0), max(u_shininess, 1.0));\n"
-	"    col = base.rgb * (0.3 + 0.7 * diff) + u_matSpecular.rgb * spec;\n"
-	"  }\n"
-	"  vec4 outc = vec4(col, base.a);\n"
-	"  if (u_useFog != 0) {\n"
-	"    float dist = length(v_eyePos);\n"
-	"    float f = clamp((u_fogFar - dist) / (u_fogFar - u_fogNear), 0.0, 1.0);\n"
-	"    outc.rgb = mix(u_fogColor.rgb, outc.rgb, f);\n"
-	"  }\n"
-	"  gl_FragColor = outc;\n"
+	"  vec4 c = v_color;\n"
+	"  if (u_useTexture != 0) c *= texture2D(u_tex, v_texcoord);\n"
+	"  c.rgb = mix(u_fogColor.rgb, c.rgb, v_fog);\n"
+	"  gl_FragColor = c;\n"
 	"}\n";
 
 void InitCoreShaders() {
@@ -301,5 +326,176 @@ void Shader2D_DrawArrays(unsigned int mode, const float* pos2, const float* uv2,
 }
 
 void Shader2D_End() {
+	if (pglUseProgram) pglUseProgram(0);
+}
+
+// --------------------------------------------------------------------
+//  M2: 3D shader draw path (terrain)
+// --------------------------------------------------------------------
+namespace {
+struct A3D {
+	GLint pos = -1, normal = -1, texcoord = -1, color = -1;
+	GLint mvp = -1, modelview = -1, normalMatrix = -1;
+	GLint useLighting = -1, useColorMaterial = -1;
+	GLint lightDir = -1, globalAmbient = -1, lightAmbient = -1, lightDiffuse = -1, lightSpecular = -1;
+	GLint matAmbient = -1, matDiffuse = -1, matSpecular = -1, shininess = -1;
+	GLint useTexGen = -1, texGenS = -1, texGenT = -1;
+	GLint useTexture = -1, tex = -1;
+	GLint useFog = -1, fogColor = -1, fogStart = -1, fogEnd = -1;
+	bool cached = false;
+} a3d;
+
+// normalMatrix = (upper-left 3x3 of modelview)^-T, column-major for glUniformMatrix3fv.
+void normalMatrixFromMV(const double mv[16], float out[9]) {
+	double m[3][3];
+	for (int c = 0; c < 3; c++)
+		for (int r = 0; r < 3; r++)
+			m[r][c] = mv[c * 4 + r];
+	double cof[3][3];
+	cof[0][0] =  (m[1][1] * m[2][2] - m[1][2] * m[2][1]);
+	cof[0][1] = -(m[1][0] * m[2][2] - m[1][2] * m[2][0]);
+	cof[0][2] =  (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+	cof[1][0] = -(m[0][1] * m[2][2] - m[0][2] * m[2][1]);
+	cof[1][1] =  (m[0][0] * m[2][2] - m[0][2] * m[2][0]);
+	cof[1][2] = -(m[0][0] * m[2][1] - m[0][1] * m[2][0]);
+	cof[2][0] =  (m[0][1] * m[1][2] - m[0][2] * m[1][1]);
+	cof[2][1] = -(m[0][0] * m[1][2] - m[0][2] * m[1][0]);
+	cof[2][2] =  (m[0][0] * m[1][1] - m[0][1] * m[1][0]);
+	double det = m[0][0] * cof[0][0] + m[0][1] * cof[0][1] + m[0][2] * cof[0][2];
+	if (det > -1e-12 && det < 1e-12) det = 1.0;
+	double inv = 1.0 / det;
+	// normalMatrix[r][c] = cof[r][c]/det; column-major out[c*3+r].
+	for (int c = 0; c < 3; c++)
+		for (int r = 0; r < 3; r++)
+			out[c * 3 + r] = (float)(cof[r][c] * inv);
+}
+} // namespace
+
+void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, int colOff) {
+	if (!CoreShaders.ready) return;
+	const TShaderProgram& p = CoreShaders.shader3d;
+	p.Use();
+	if (!a3d.cached) {
+		a3d.pos          = p.Attrib("a_position");
+		a3d.normal       = p.Attrib("a_normal");
+		a3d.texcoord     = p.Attrib("a_texcoord");
+		a3d.color        = p.Attrib("a_color");
+		a3d.mvp          = p.Uniform("u_mvp");
+		a3d.modelview    = p.Uniform("u_modelview");
+		a3d.normalMatrix = p.Uniform("u_normalMatrix");
+		a3d.useLighting  = p.Uniform("u_useLighting");
+		a3d.useColorMaterial = p.Uniform("u_useColorMaterial");
+		a3d.lightDir     = p.Uniform("u_lightDir");
+		a3d.globalAmbient = p.Uniform("u_globalAmbient");
+		a3d.lightAmbient = p.Uniform("u_lightAmbient");
+		a3d.lightDiffuse = p.Uniform("u_lightDiffuse");
+		a3d.lightSpecular = p.Uniform("u_lightSpecular");
+		a3d.matAmbient   = p.Uniform("u_matAmbient");
+		a3d.matDiffuse   = p.Uniform("u_matDiffuse");
+		a3d.matSpecular  = p.Uniform("u_matSpecular");
+		a3d.shininess    = p.Uniform("u_shininess");
+		a3d.useTexGen    = p.Uniform("u_useTexGen");
+		a3d.texGenS      = p.Uniform("u_texGenS");
+		a3d.texGenT      = p.Uniform("u_texGenT");
+		a3d.useTexture   = p.Uniform("u_useTexture");
+		a3d.tex          = p.Uniform("u_tex");
+		a3d.useFog       = p.Uniform("u_useFog");
+		a3d.fogColor     = p.Uniform("u_fogColor");
+		a3d.fogStart     = p.Uniform("u_fogStart");
+		a3d.fogEnd       = p.Uniform("u_fogEnd");
+		a3d.cached = true;
+	}
+
+	// --- snapshot the live fixed-function state ---
+	GLdouble proj[16], mv[16];
+	glGetDoublev(GL_PROJECTION_MATRIX, proj);
+	glGetDoublev(GL_MODELVIEW_MATRIX, mv);
+	TMatrix<4, 4> projM, mvM;
+	for (int c = 0; c < 4; c++)
+		for (int r = 0; r < 4; r++) {
+			projM[c][r] = proj[c * 4 + r];
+			mvM[c][r] = mv[c * 4 + r];
+		}
+	TMatrix<4, 4> mvp = projM * mvM;
+	float m16[16];
+	MatrixToGL(mvp, m16);
+	pglUniformMatrix4fv(a3d.mvp, 1, GL_FALSE, m16);
+	MatrixToGL(mvM, m16);
+	pglUniformMatrix4fv(a3d.modelview, 1, GL_FALSE, m16);
+	float nm[9];
+	normalMatrixFromMV(mv, nm);
+	pglUniformMatrix3fv(a3d.normalMatrix, 1, GL_FALSE, nm);
+
+	pglUniform1i(a3d.useLighting, glIsEnabled(GL_LIGHTING) ? 1 : 0);
+	pglUniform1i(a3d.useColorMaterial, glIsEnabled(GL_COLOR_MATERIAL) ? 1 : 0);
+
+	GLfloat lpos[4], la[4], ld[4], ls[4], ga[4];
+	glGetLightfv(GL_LIGHT0, GL_POSITION, lpos); // eye-space (w=0 -> direction)
+	glGetLightfv(GL_LIGHT0, GL_AMBIENT, la);
+	glGetLightfv(GL_LIGHT0, GL_DIFFUSE, ld);
+	glGetLightfv(GL_LIGHT0, GL_SPECULAR, ls);
+	glGetFloatv(GL_LIGHT_MODEL_AMBIENT, ga);
+	pglUniform3fv(a3d.lightDir, 1, lpos);
+	pglUniform4fv(a3d.globalAmbient, 1, ga);
+	pglUniform4fv(a3d.lightAmbient, 1, la);
+	pglUniform4fv(a3d.lightDiffuse, 1, ld);
+	pglUniform4fv(a3d.lightSpecular, 1, ls);
+
+	GLfloat ma[4], md[4], ms[4], sh = 1.f;
+	glGetMaterialfv(GL_FRONT, GL_AMBIENT, ma);
+	glGetMaterialfv(GL_FRONT, GL_DIFFUSE, md);
+	glGetMaterialfv(GL_FRONT, GL_SPECULAR, ms);
+	glGetMaterialfv(GL_FRONT, GL_SHININESS, &sh);
+	pglUniform4fv(a3d.matAmbient, 1, ma);
+	pglUniform4fv(a3d.matDiffuse, 1, md);
+	pglUniform4fv(a3d.matSpecular, 1, ms);
+	pglUniform1f(a3d.shininess, sh);
+
+	bool texGen = glIsEnabled(GL_TEXTURE_GEN_S) != 0;
+	pglUniform1i(a3d.useTexGen, texGen ? 1 : 0);
+	if (texGen) {
+		GLfloat ps[4], pt[4];
+		glGetTexGenfv(GL_S, GL_OBJECT_PLANE, ps);
+		glGetTexGenfv(GL_T, GL_OBJECT_PLANE, pt);
+		pglUniform4fv(a3d.texGenS, 1, ps);
+		pglUniform4fv(a3d.texGenT, 1, pt);
+	}
+	pglUniform1i(a3d.useTexture, glIsEnabled(GL_TEXTURE_2D) ? 1 : 0);
+	pglUniform1i(a3d.tex, 0);
+
+	GLfloat fc[4], fs = 0.f, fe = 1.f;
+	glGetFloatv(GL_FOG_COLOR, fc);
+	glGetFloatv(GL_FOG_START, &fs);
+	glGetFloatv(GL_FOG_END, &fe);
+	pglUniform1i(a3d.useFog, glIsEnabled(GL_FOG) ? 1 : 0);
+	pglUniform4fv(a3d.fogColor, 1, fc);
+	pglUniform1f(a3d.fogStart, fs);
+	pglUniform1f(a3d.fogEnd, fe);
+
+	// --- point the generic attribs into the interleaved buffer ---
+	const GLubyte* b = static_cast<const GLubyte*>(base);
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, stride, b + posOff);
+	pglEnableVertexAttribArray(a3d.normal);
+	pglVertexAttribPointer(a3d.normal, 3, GL_FLOAT, GL_FALSE, stride, b + normOff);
+	pglEnableVertexAttribArray(a3d.color);
+	pglVertexAttribPointer(a3d.color, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, b + colOff);
+}
+
+void Shader3D_SyncFog() {
+	if (!CoreShaders.ready || a3d.useFog < 0) return;
+	pglUniform1i(a3d.useFog, glIsEnabled(GL_FOG) ? 1 : 0);
+}
+
+void Shader3D_DrawElementsU32(unsigned int count, const unsigned int* indices) {
+	if (!CoreShaders.ready || a3d.pos < 0) return;
+	glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, indices);
+}
+
+void Shader3D_End() {
+	if (!CoreShaders.ready) return;
+	if (a3d.pos >= 0)    pglDisableVertexAttribArray(a3d.pos);
+	if (a3d.normal >= 0) pglDisableVertexAttribArray(a3d.normal);
+	if (a3d.color >= 0)  pglDisableVertexAttribArray(a3d.color);
 	if (pglUseProgram) pglUseProgram(0);
 }
