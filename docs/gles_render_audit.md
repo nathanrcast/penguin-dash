@@ -110,8 +110,13 @@ context switch.
   (`GL_QUAD_STRIP`→`GL_TRIANGLE_STRIP`, per-vertex colour array, coloured by the shader fog term). The
   3D shader's lighting-OFF branch now uses the vertex colour directly (matches fixed-function ignoring
   material when lighting is off). Verified: skybox + distance fog render correctly.
-- **M4 – Characters:** `tux.cpp` — replace `gluSphere` with a generated sphere mesh; convert the 3
-  `glBegin` fans/strips; material/light. Tux renders correctly.
+- **M4a – Character body:** ✅ **DONE 2026-07-01** (commit `a5b0a74`). `tux.cpp`: `gluSphere` →
+  generated cached unit-sphere mesh (pos == normal); `DrawNodes` accumulates the model matrix in
+  software (`parentModel * node->trans`, no matrix stack) → `Shader3D_SetModel3D`; per-node material via
+  `Shader3D_SetMaterial` (+ specular term). Verified: Tux solid, correctly lit, joints animate.
+- **M4b – Character shadow:** TODO. `DrawShadow`/`DrawShadowSphere` (3 `glBegin` fans/strips at
+  `tux.cpp:672/690/706` + stencil, TUX_SHADOW mode, perf_level>2 default) still fixed-function
+  (renders on GL 2.1). Convert the glBegin sphere to arrays; decide stencil handling for GLES2.
 - **M5 – Decals & snow:** `track_marks.cpp` (2 `glBegin`) + `particles.cpp`; verify blend/alpha states.
 - **M6 – Cleanup:** drop `glShadeModel`; `glAlphaFunc`→`discard`; remaining GLU; editor tools last;
   remove desktop-GL-only headers. **Full desktop GLES2 build green.**
