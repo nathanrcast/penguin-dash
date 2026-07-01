@@ -83,8 +83,14 @@ context switch.
   are compiled+linked but **not bound** → zero visual change. Verified on `.13`: build clean (no
   warnings), and a windowed smoke run logged *"core 2D/3D shaders compiled + linked OK"* on the live
   GL context. (`Makefile.in` hand-updated alongside `Makefile.am` — no autotools installed.)
-- **M1 – 2D pipeline:** `Setup2dScene` + `textures.cpp` + `hud.cpp` (incl. gauge fan) + `font.cpp` →
-  2D shader. **First visual proof: menus + HUD render.**
+- **M1 – 2D pipeline:** ✅ **DONE 2026-07-01** (part 1 `266df4e`: `TTexture::Draw*`; part 2 `bbcad5a`:
+  HUD + numeric font). `textures.cpp` (`TTexture` draws + `DrawNumStr`/`DrawNumChr`) and `hud.cpp`
+  (`draw_gauge` incl. the speed tri-fan, `DrawPercentBar`, `DrawWind`) routed onto the Shader2D path;
+  `glTexGen` → inline UVs, matrix-stack translate/rotate → `Shader2D_SetModel`, immediate-mode
+  `glBegin` → vertex arrays. `font.cpp` unchanged (SFML `sf::Text`, already GLES2-safe). **Setup2dScene
+  intentionally left fixed-function** — the converted draws each set their own ortho via
+  `Shader2D_Begin`, so nothing depends on it; it's removed in M6 cleanup with the other desktop-GL-only
+  calls. **First visual proof met: menus + HUD render** (gauge + timer verified in a play-tested race).
 - **M2 – Terrain:** `course_render.cpp` arrays → VBO + 3D shader (light+fog). Course renders.
 - **M3 – Environment:** `env.cpp` sky/fog (quad-strip + arrays).
 - **M4 – Characters:** `tux.cpp` — replace `gluSphere` with a generated sphere mesh; convert the 3
