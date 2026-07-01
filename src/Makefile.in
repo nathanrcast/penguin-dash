@@ -109,7 +109,8 @@ am_etr_OBJECTS = audio.$(OBJEXT) common.$(OBJEXT) \
 	course_render.$(OBJEXT) credits.$(OBJEXT) env.$(OBJEXT) \
 	event.$(OBJEXT) event_select.$(OBJEXT) font.$(OBJEXT) \
 	game_config.$(OBJEXT) game_ctrl.$(OBJEXT) game_over.$(OBJEXT) \
-	game_type_select.$(OBJEXT) gui.$(OBJEXT) help.$(OBJEXT) \
+	game_type_select.$(OBJEXT) glmatrix.$(OBJEXT) \
+	glshader.$(OBJEXT) gui.$(OBJEXT) help.$(OBJEXT) \
 	hud.$(OBJEXT) intro.$(OBJEXT) keyframe.$(OBJEXT) \
 	loading.$(OBJEXT) main.$(OBJEXT) mathlib.$(OBJEXT) \
 	matrices.$(OBJEXT) newplayer.$(OBJEXT) ogl.$(OBJEXT) \
@@ -329,6 +330,8 @@ etr_SOURCES = \
 	game_ctrl.cpp	\
 	game_over.cpp	\
 	game_type_select.cpp \
+	glmatrix.cpp	\
+	glshader.cpp	\
 	gui.cpp		\
 	help.cpp	\
 	hud.cpp		\

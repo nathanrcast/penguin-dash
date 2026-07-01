@@ -15,6 +15,8 @@ etr_SOURCES =		\
 	game_ctrl.cpp	\
 	game_over.cpp	\
 	game_type_select.cpp \
+	glmatrix.cpp	\
+	glshader.cpp	\
 	gui.cpp		\
 	help.cpp	\
 	hud.cpp		\
@@ -67,6 +69,8 @@ noinst_HEADERS =	\
 	game_ctrl.h	\
 	game_over.h	\
 	game_type_select.h \
+	glmatrix.h	\
+	glshader.h	\
 	gui.h		\
 	help.h		\
 	hud.h		\

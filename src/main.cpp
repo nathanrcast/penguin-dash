@@ -22,6 +22,7 @@ GNU General Public License for more details.
 #include "bh.h"
 #include "textures.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "splash_screen.h"
 #include "audio.h"
 #include "font.h"
@@ -70,6 +71,7 @@ int main(int argc, char **argv) {
 	InitGame(argc, argv);
 	Winsys.Init();
 	InitOpenglExtensions();
+	InitCoreShaders(); // GLES2 port scaffolding (M0): compile+validate, not yet used
 
 	// For checking the joystick and the OpgenGL version (the info is written on the console):
 	//Winsys.PrintJoystickInfo();

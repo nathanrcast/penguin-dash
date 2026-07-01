@@ -97,10 +97,12 @@ void CWinsys::SetupVideoMode(const TScreenRes& res) {
 
 	ResetRenderMode();
 
+	// GL 2.1 (compatibility) — enough for GLSL shaders while the fixed-function
+	// pipeline still runs. GLES2 port scaffolding (M0). Was 1.2.
 #ifdef USE_STENCIL_BUFFER
-	sf::ContextSettings ctx(bpp, 8, 0, 1, 2);
+	sf::ContextSettings ctx(bpp, 8, 0, 2, 1);
 #else
-	sf::ContextSettings ctx(bpp, 0, 0, 1, 2);
+	sf::ContextSettings ctx(bpp, 0, 0, 2, 1);
 #endif
 	window.create(sf::VideoMode(resolution.width, resolution.height, bpp), WINDOW_TITLE, style, ctx);
 	if (param.framerate)
