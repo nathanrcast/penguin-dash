@@ -760,6 +760,7 @@ void quadsquare::Render(const quadcornerdata& cd, GLubyte *vnc_array) {
 
 		if (VertexArrayCounter != 0) {
 			glDisable(GL_FOG);
+			RenderSetFogEnabled(false);
 			for (GLuint i=0; i<VertexArrayCounter; i++) {
 				colorval(VertexArrayIndices[i], 0) = 0;
 				colorval(VertexArrayIndices[i], 1) = 0;
@@ -770,6 +771,7 @@ void quadsquare::Render(const quadcornerdata& cd, GLubyte *vnc_array) {
 			DrawTris();
 			//if (fog_on)
 			glEnable(GL_FOG);
+			RenderSetFogEnabled(true);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 			for (GLuint i=0; i<VertexArrayCounter; i++) {
 				colorval(VertexArrayIndices[i], 0) = 255;

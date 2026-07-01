@@ -51,9 +51,7 @@ public:
 };
 
 // ---------------------------------------------------------------
-// CGluCamera works with gluLookAt but is reduced to a simple
-// go-around-camera that ist strictly focused on an object in
-// identity position (0,0,0).
+// Simple go-around camera focused on an object at identity position (0,0,0).
 class CGluCamera {
 private:
 public:

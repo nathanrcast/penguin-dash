@@ -22,6 +22,8 @@ GNU General Public License for more details.
 #include "tools.h"
 #include "tux.h"
 #include "ogl.h"
+#include "glmatrix.h"
+#include "glshader.h"
 #include "font.h"
 #include "textures.h"
 #include "keyframe.h"
@@ -29,7 +31,6 @@ GNU General Public License for more details.
 #include "tool_char.h"
 #include "env.h"
 #include "winsys.h"
-#include <GL/glu.h>
 
 CGluCamera GluCamera;
 
@@ -86,10 +87,13 @@ void CCamera::Update(float timestep) {
 	if (pitchup)	RotatePitch(-2 * timestep);
 	if (pitchdown)	RotatePitch(2 * timestep);
 
-	glLoadIdentity();
-	glRotatef(-vpitch, 1.0, 0.0, 0.0);
-	glRotatef(-vhead, 0.0, 1.0, 0.0);
-	glTranslatef(-xview, -yview, -zview);
+	TMatrix<4, 4> pitch;
+	TMatrix<4, 4> head;
+	TMatrix<4, 4> translate;
+	pitch.SetRotationMatrix(-vpitch, 'x');
+	head.SetRotationMatrix(-vhead, 'y');
+	translate.SetTranslationMatrix(-xview, -yview, -zview);
+	glLoadMatrix(pitch * head * translate);
 }
 
 
@@ -109,8 +113,7 @@ void CGluCamera::Update(float timestep) {
 	if (farther) distance += timestep * 100;
 	double xx = distance * std::sin(angle * M_PI / 180);
 	double zz = distance * std::sin((90 - angle) * M_PI / 180);
-	glLoadIdentity();
-	gluLookAt(xx, 0, zz, 0, 0, 0, 0, 1, 0);
+	glLoadMatrix(MakeLookAt(TVector3d(xx, 0, zz), TVector3d(0, 0, 0), TVector3d(0, 1, 0)));
 }
 
 // --------------------------------------------------------------------
@@ -137,19 +140,15 @@ static int tool_mode = 0;
 
 void DrawQuad(float x, float y, float w, float h, float scrheight, const sf::Color& col, int frame) {
 	glDisable(GL_TEXTURE_2D);
-	glColor(col);
 	const GLfloat vtx[] = {
 		x - frame, scrheight - y - h - frame,
 		x + w + frame, scrheight - y - h - frame,
 		x + w + frame, scrheight - y + frame,
 		x - frame, scrheight - y + frame
 	};
-	glEnableClientState(GL_VERTEX_ARRAY);
-
-	glVertexPointer(2, GL_FLOAT, 0, vtx);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, nullptr, 4, false, col);
+	Shader2D_End();
 	glEnable(GL_TEXTURE_2D);
 }
 

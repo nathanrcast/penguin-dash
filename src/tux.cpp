@@ -31,7 +31,6 @@ still shaped with spheres.
 #include "textures.h"
 #include "course.h"
 #include "physics.h"
-#include <GL/glu.h>
 #include <algorithm>
 #include <map>
 #include <vector>

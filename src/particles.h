@@ -50,7 +50,8 @@ struct TFlake {
 	float size;
 	const GLfloat* tex;
 
-	void Draw(const TPlane& lp, const TPlane& rp, bool rotate_flake, float dir_angle) const;
+	void Draw(const TPlane& lp, const TPlane& rp, bool rotate_flake, float dir_angle,
+	          const sf::Color& color) const;
 };
 
 struct TFlakeArea {
@@ -145,7 +146,7 @@ struct TCurtain {
 	    float min_height,
 	    int dense);
 	void SetStartParams(const CControl* ctrl);
-	void Draw() const;
+	void Draw(const sf::Color& color) const;
 	void Update(float timestep, const TVector3d& drift, const CControl* ctrl);
 
 private:

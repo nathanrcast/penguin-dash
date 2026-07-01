@@ -63,20 +63,17 @@ void TTexture::Bind() {
 }
 
 void TTexture::Draw() {
-	GLint w, h;
-
 	glEnable(GL_TEXTURE_2D);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	Bind();
 
-	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
-	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
+	sf::Vector2u texSize = texture.getSize();
 
 	const float vtx[] = {
 		0.f, 0.f,
-		(float)w, 0.f,
-		(float)w, (float)h,
-		0.f, (float)h
+		(float)texSize.x, 0.f,
+		(float)texSize.x, (float)texSize.y,
+		0.f, (float)texSize.y
 	};
 	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
 	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, fullsize_uv, 4, true, sf::Color::White);
@@ -84,18 +81,16 @@ void TTexture::Draw() {
 }
 
 void TTexture::Draw(int x, int y, float size) {
-	GLint w, h;
 	GLfloat width, height, top, bott, left, right;
 
 	glEnable(GL_TEXTURE_2D);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	Bind();
 
-	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
-	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
+	sf::Vector2u texSize = texture.getSize();
 
-	width  = w * size;
-	height = h * size;
+	width  = texSize.x * size;
+	height = texSize.y * size;
 	top = Winsys.resolution.height - y;
 	bott = top - height;
 

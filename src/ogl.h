@@ -53,6 +53,38 @@ void set_material(const sf::Color& diffuse_colour,
                   const sf::Color& specular_colour,
                   float specular_exp);
 
+struct TRenderState {
+	bool texture2d = false;
+	bool lighting = false;
+	bool colorMaterial = false;
+	bool texGen = false;
+	bool fog = false;
+	bool alphaTest = false;
+	float alphaRef = 0.0f;
+	float globalAmbient[4];
+	float lightPosition[4];
+	float lightAmbient[4];
+	float lightDiffuse[4];
+	float lightSpecular[4];
+	float matAmbient[4];
+	float matDiffuse[4];
+	float matSpecular[4];
+	float shininess = 1.0f;
+	float texGenS[4];
+	float texGenT[4];
+	float fogColor[4];
+	float fogStart = 0.0f;
+	float fogEnd = 1.0f;
+	TMatrix<4, 4> projection;
+	TMatrix<4, 4> modelview;
+};
+
+const TRenderState& RenderStateSnapshot();
+void RenderSetLight(GLenum num, const float* position, const float* ambient,
+                    const float* diffuse, const float* specular);
+void RenderSetFog(bool enabled, float start, float end, const float* color);
+void RenderSetFogEnabled(bool enabled);
+void RenderSetTexGenPlanes(const float* s, const float* t);
 
 void ResetRenderMode();
 void PushRenderMode(TRenderMode mode);

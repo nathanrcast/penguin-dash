@@ -237,13 +237,14 @@ void RenderSingleFrame(float timestep) {
 	const std::string& hlname = TestFrame.GetHighlightName(curr_joint);
 	TestChar.highlight_node = TestChar.GetNodeName(hlname);
 
-	glPushMatrix();
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	glLoadMatrix(id);
 	SetToolLight();
 	GluCamera.Update(timestep);
 
 	TestFrame.CalcKeyframe(curr_frame, &TestChar, ref_position);
 	TestChar.Draw();
-	glPopMatrix();
 
 	// ----------------- 2d screen ------------------------------------
 	Setup2dScene();
@@ -320,9 +321,7 @@ void RenderSequence(float timestep) {
 		keyrun = false;
 	}
 
-	glPushMatrix();
 	TestChar.Draw();
-	glPopMatrix();
 
 	Reshape(Winsys.resolution.width, Winsys.resolution.height);
 	Winsys.SwapBuffers();

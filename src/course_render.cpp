@@ -38,6 +38,7 @@ void setup_course_tex_gen() {
 	static const GLfloat zplane[4] = {0.f, 0.f, 1.f / TEX_SCALE, 0.f };
 	glTexGenfv(GL_S, GL_OBJECT_PLANE, xplane);
 	glTexGenfv(GL_T, GL_OBJECT_PLANE, zplane);
+	RenderSetTexGenPlanes(xplane, zplane);
 }
 
 void RenderCourse() {

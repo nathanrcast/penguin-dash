@@ -56,16 +56,11 @@ void Shader2D_DrawArrays(unsigned int mode, const float* pos2, const float* uv2,
 void Shader2D_End();
 
 // --- M2: 3D shader draw path (terrain first) ---
-// Desktop-first strategy: rather than intercept every matrix/light/fog call
-// scattered through the engine, we SNAPSHOT the live fixed-function GL state
-// (proj/modelview matrices, light 0, global ambient, material, linear fog,
-// object-linear texgen, enables) via glGet* at draw time and reproduce it in
-// the 3D program. This guarantees a pixel match with the fixed-function
-// pipeline on desktop. On GLES2 (Android) glGet of this state is unavailable,
-// so this snapshot is replaced by tracked matrices/uniforms in a later pass.
+// M6: matrices/light/fog/material/texgen/enables come from ogl.cpp's tracked
+// render state rather than glGet snapshots, so these paths are GLES2-ready.
 //
 // Begin for an interleaved VNC vertex buffer (position 3f, normal 3f, color
-// 4ub) — the terrain layout. Snapshots state, binds the 3D program, uploads
+// 4ub) — the terrain layout. Binds the 3D program, uploads
 // all uniforms, and points the generic attribs into the buffer.
 void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, int colOff);
 // Re-read the dynamic fog enable and re-upload u_useFog (the terrain env-map
@@ -74,8 +69,8 @@ void Shader3D_SyncFog();
 // glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, indices) through the program.
 void Shader3D_DrawElementsU32(unsigned int count, const unsigned int* indices);
 
-// Object/billboard path (trees, items). Begin3D snapshots the env + base
-// proj/view once; SetModel3D applies a per-object model (view*model), replacing
+// Object/billboard path (trees, items). Begin3D reads env + base proj/view once
+// from tracked state; SetModel3D applies a per-object model (view*model), replacing
 // the fixed-function glPushMatrix/glTranslate/glRotate. SetObjectArrays binds
 // float-xyz positions + short-st texcoords + a constant normal. DrawQuadArray
 // draws nQuads consecutive quads (4 verts each) as triangles (no GL_QUADS in GLES2).
@@ -91,6 +86,10 @@ void Shader3D_SetTexturedArray(const void* pos, unsigned int posType, const floa
 void Shader3D_SetColoredArray(const float* pos, const unsigned char* color);
 // Unlit geometry with one constant colour (Tux shadow).
 void Shader3D_SetPositionColorArray(const float* pos, const sf::Color& col);
+// Lit textured geometry with per-vertex normals and a constant colour/material
+// (track marks).
+void Shader3D_SetLitTexturedArray(const float* pos, const float* normal, const float* tex,
+                                  const sf::Color& col);
 void Shader3D_DrawArrays(unsigned int mode, int count);
 
 // Character (M4): explicit material + lit untextured mesh (Tux spheres).

@@ -21,6 +21,7 @@ GNU General Public License for more details.
 
 #include "track_marks.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "textures.h"
 #include "course.h"
 #include "physics.h"
@@ -72,6 +73,36 @@ void init_track_marks() {
 	continuing_track = false;
 }
 
+static void append_track_vertex(const TVector3d& v, const TVector3d& n, const TVector2d& t,
+                                GLfloat* pos, GLfloat* normal, GLfloat* tex, int& idx) {
+	pos[idx * 3 + 0] = static_cast<GLfloat>(v.x);
+	pos[idx * 3 + 1] = static_cast<GLfloat>(v.y);
+	pos[idx * 3 + 2] = static_cast<GLfloat>(v.z);
+	normal[idx * 3 + 0] = static_cast<GLfloat>(n.x);
+	normal[idx * 3 + 1] = static_cast<GLfloat>(n.y);
+	normal[idx * 3 + 2] = static_cast<GLfloat>(n.z);
+	tex[idx * 2 + 0] = static_cast<GLfloat>(t.x);
+	tex[idx * 2 + 1] = static_cast<GLfloat>(t.y);
+	++idx;
+}
+
+static void draw_track_quad(const track_quad_t& q, const sf::Color& colour) {
+	GLfloat pos[18];
+	GLfloat normal[18];
+	GLfloat tex[12];
+	int idx = 0;
+
+	append_track_vertex(q.v1, q.n1, q.t1, pos, normal, tex, idx);
+	append_track_vertex(q.v2, q.n2, q.t2, pos, normal, tex, idx);
+	append_track_vertex(q.v4, q.n4, q.t4, pos, normal, tex, idx);
+	append_track_vertex(q.v1, q.n1, q.t1, pos, normal, tex, idx);
+	append_track_vertex(q.v4, q.n4, q.t4, pos, normal, tex, idx);
+	append_track_vertex(q.v3, q.n3, q.t3, pos, normal, tex, idx);
+
+	Shader3D_SetLitTexturedArray(pos, normal, tex, colour);
+	Shader3D_DrawArrays(GL_TRIANGLES, idx);
+}
+
 template<typename T>
 static T incrementRingIterator(T q) {
 	T ret = q;
@@ -106,6 +137,10 @@ void DrawTrackmarks() {
 
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	Shader3D_Begin3D();
+	Shader3D_SetModel3D(id);
 	for (std::list<track_quad_t>::const_iterator q = track_marks.quads.begin(); q != track_marks.quads.end(); ++q) {
 		if (q->alpha != track_colour.a) {
 			track_colour.a = q->alpha;
@@ -113,67 +148,9 @@ void DrawTrackmarks() {
 		}
 		textures[q->track_type]->Bind();
 
-		if ((q->track_type == TRACK_HEAD) || (q->track_type == TRACK_TAIL)) {
-			glBegin(GL_QUADS);
-
-			glNormal3(q->n1);
-			glTexCoord2(q->t1);
-			glVertex3(q->v1);
-
-			glNormal3(q->n2);
-			glTexCoord2(q->t2);
-			glVertex3(q->v2);
-
-			glNormal3(q->n4);
-			glTexCoord2(q->t4);
-			glVertex3(q->v4);
-
-			glNormal3(q->n3);
-			glTexCoord2(q->t3);
-			glVertex3(q->v3);
-
-			glEnd();
-
-		} else {
-			glBegin(GL_QUAD_STRIP);
-			glNormal3(q->n2);
-			glTexCoord2(q->t2);
-			glVertex3(q->v2);
-
-			glNormal3(q->n1);
-			glTexCoord2(q->t1);
-			glVertex3(q->v1);
-
-			glNormal3(q->n4);
-			glTexCoord2(q->t4);
-			glVertex3(q->v4);
-
-			glNormal3(q->n3);
-			glTexCoord2(q->t3);
-			glVertex3(q->v3);
-
-			std::list<track_quad_t>::const_iterator qnext = q;
-			++qnext;
-			while (qnext != track_marks.quads.end() && qnext->track_type != TRACK_TAIL) {
-				q = qnext;
-				if (q->alpha != track_colour.a) {
-					track_colour.a = q->alpha;
-					set_material_diffuse(track_colour);
-				}
-
-				glNormal3(q->n4);
-				glTexCoord2(q->t4);
-				glVertex3(q->v4);
-
-				glNormal3(q->n3);
-				glTexCoord2(q->t3);
-				glVertex3(q->v3);
-
-				++qnext;
-			}
-			glEnd();
-		}
+		draw_track_quad(*q, track_colour);
 	}
+	Shader3D_End();
 }
 
 void break_track_marks() {

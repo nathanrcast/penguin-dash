@@ -55,17 +55,10 @@ void COglTest::Loop(float time_step) {
 	ScopedRenderMode rm(TUX);
 	ClearRenderContext(colDDBackgr);
 
-	glLoadIdentity();
-	glPushMatrix();
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	glLoadMatrix(id);
 	SetTestLight();
-
-	/*
-		glTranslatef (xposition, yposition, zposition);
-		glRotatef (xrotation, 1, 0, 0);
-		glRotatef (yrotation, 0, 1, 0);
-		glRotatef (zrotation, 0, 0, 1);
-	*/
-	glPopMatrix();
 
 	// --------------- 2d screen --------------------------------------
 	Setup2dScene();

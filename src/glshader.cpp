@@ -9,6 +9,7 @@ Licensed under the GNU General Public License; see COPYING.
 #include "glshader.h"
 #include "glmatrix.h"
 #include "common.h" // Message()
+#include "ogl.h"
 #include <SFML/Window/Context.hpp>
 #include <string>
 #include <vector>
@@ -182,7 +183,7 @@ static const char* FS_2D =
 // Reproduces: GL_COLOR_MATERIAL (vertex color = ambient+diffuse material),
 // single directional light 0 (ambient+diffuse+optional specular, infinite
 // viewer H = normalize(L + z)), object-linear texgen, and linear eye-distance
-// fog — all fed from glGet snapshots.
+// fog — all fed from ogl.cpp's tracked render state.
 static const char* VS_3D =
 	"attribute vec3 a_position;\n"
 	"attribute vec3 a_normal;\n"
@@ -390,68 +391,37 @@ void cacheLocations3D(const TShaderProgram& p) {
 	a3d.cached = true;
 }
 
-// Snapshot all non-matrix fixed-function state into the 3D program uniforms:
+// Upload all non-matrix render state into the 3D program uniforms:
 // lighting, material, texgen, texture, alpha test, fog.
 void snapEnv3D() {
-	pglUniform1i(a3d.useLighting, glIsEnabled(GL_LIGHTING) ? 1 : 0);
-	pglUniform1i(a3d.useColorMaterial, glIsEnabled(GL_COLOR_MATERIAL) ? 1 : 0);
+	const TRenderState& state = RenderStateSnapshot();
+	pglUniform1i(a3d.useLighting, state.lighting ? 1 : 0);
+	pglUniform1i(a3d.useColorMaterial, state.colorMaterial ? 1 : 0);
 
-	GLfloat lpos[4], la[4], ld[4], ls[4], ga[4];
-	glGetLightfv(GL_LIGHT0, GL_POSITION, lpos); // eye-space (w=0 -> direction)
-	glGetLightfv(GL_LIGHT0, GL_AMBIENT, la);
-	glGetLightfv(GL_LIGHT0, GL_DIFFUSE, ld);
-	glGetLightfv(GL_LIGHT0, GL_SPECULAR, ls);
-	glGetFloatv(GL_LIGHT_MODEL_AMBIENT, ga);
-	pglUniform3fv(a3d.lightDir, 1, lpos);
-	pglUniform4fv(a3d.globalAmbient, 1, ga);
-	pglUniform4fv(a3d.lightAmbient, 1, la);
-	pglUniform4fv(a3d.lightDiffuse, 1, ld);
-	pglUniform4fv(a3d.lightSpecular, 1, ls);
+	pglUniform3fv(a3d.lightDir, 1, state.lightPosition);
+	pglUniform4fv(a3d.globalAmbient, 1, state.globalAmbient);
+	pglUniform4fv(a3d.lightAmbient, 1, state.lightAmbient);
+	pglUniform4fv(a3d.lightDiffuse, 1, state.lightDiffuse);
+	pglUniform4fv(a3d.lightSpecular, 1, state.lightSpecular);
 
-	GLfloat ma[4], md[4], ms[4], sh = 1.f;
-	glGetMaterialfv(GL_FRONT, GL_AMBIENT, ma);
-	glGetMaterialfv(GL_FRONT, GL_DIFFUSE, md);
-	glGetMaterialfv(GL_FRONT, GL_SPECULAR, ms);
-	glGetMaterialfv(GL_FRONT, GL_SHININESS, &sh);
-	pglUniform4fv(a3d.matAmbient, 1, ma);
-	pglUniform4fv(a3d.matDiffuse, 1, md);
-	pglUniform4fv(a3d.matSpecular, 1, ms);
-	pglUniform1f(a3d.shininess, sh);
+	pglUniform4fv(a3d.matAmbient, 1, state.matAmbient);
+	pglUniform4fv(a3d.matDiffuse, 1, state.matDiffuse);
+	pglUniform4fv(a3d.matSpecular, 1, state.matSpecular);
+	pglUniform1f(a3d.shininess, state.shininess);
 
-	bool texGen = glIsEnabled(GL_TEXTURE_GEN_S) != 0;
-	pglUniform1i(a3d.useTexGen, texGen ? 1 : 0);
-	if (texGen) {
-		GLfloat ps[4], pt[4];
-		glGetTexGenfv(GL_S, GL_OBJECT_PLANE, ps);
-		glGetTexGenfv(GL_T, GL_OBJECT_PLANE, pt);
-		pglUniform4fv(a3d.texGenS, 1, ps);
-		pglUniform4fv(a3d.texGenT, 1, pt);
-	}
-	pglUniform1i(a3d.useTexture, glIsEnabled(GL_TEXTURE_2D) ? 1 : 0);
+	pglUniform1i(a3d.useTexGen, state.texGen ? 1 : 0);
+	pglUniform4fv(a3d.texGenS, 1, state.texGenS);
+	pglUniform4fv(a3d.texGenT, 1, state.texGenT);
+	pglUniform1i(a3d.useTexture, state.texture2d ? 1 : 0);
 	pglUniform1i(a3d.tex, 0);
 
-	GLfloat aref = 0.f;
-	glGetFloatv(GL_ALPHA_TEST_REF, &aref);
-	pglUniform1i(a3d.alphaTest, glIsEnabled(GL_ALPHA_TEST) ? 1 : 0);
-	pglUniform1f(a3d.alphaRef, aref);
+	pglUniform1i(a3d.alphaTest, state.alphaTest ? 1 : 0);
+	pglUniform1f(a3d.alphaRef, state.alphaRef);
 
-	GLfloat fc[4], fs = 0.f, fe = 1.f;
-	glGetFloatv(GL_FOG_COLOR, fc);
-	glGetFloatv(GL_FOG_START, &fs);
-	glGetFloatv(GL_FOG_END, &fe);
-	pglUniform1i(a3d.useFog, glIsEnabled(GL_FOG) ? 1 : 0);
-	pglUniform4fv(a3d.fogColor, 1, fc);
-	pglUniform1f(a3d.fogStart, fs);
-	pglUniform1f(a3d.fogEnd, fe);
-}
-
-// Read a GL matrix (column-major double[16]) into a TMatrix.
-void glMatrixToTMatrix(GLenum which, TMatrix<4, 4>& out) {
-	GLdouble m[16];
-	glGetDoublev(which, m);
-	for (int c = 0; c < 4; c++)
-		for (int r = 0; r < 4; r++)
-			out[c][r] = m[c * 4 + r];
+	pglUniform1i(a3d.useFog, state.fog ? 1 : 0);
+	pglUniform4fv(a3d.fogColor, 1, state.fogColor);
+	pglUniform1f(a3d.fogStart, state.fogStart);
+	pglUniform1f(a3d.fogEnd, state.fogEnd);
 }
 
 // Upload mvp/modelview/normalMatrix given a modelview TMatrix.
@@ -500,12 +470,8 @@ void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, in
 	p.Use();
 	cacheLocations3D(p);
 
-	// Snapshot the live fixed-function state, using the current modelview
-	// directly (terrain is drawn in world space, model = identity).
-	TMatrix<4, 4> projM, mvM;
-	glMatrixToTMatrix(GL_PROJECTION_MATRIX, projM);
-	glMatrixToTMatrix(GL_MODELVIEW_MATRIX, mvM);
-	uploadMatrices3D(projM, mvM);
+	const TRenderState& state = RenderStateSnapshot();
+	uploadMatrices3D(state.projection, state.modelview);
 	snapEnv3D();
 
 	// Point the generic attribs into the interleaved buffer.
@@ -520,7 +486,7 @@ void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, in
 
 void Shader3D_SyncFog() {
 	if (!CoreShaders.ready || a3d.useFog < 0) return;
-	pglUniform1i(a3d.useFog, glIsEnabled(GL_FOG) ? 1 : 0);
+	pglUniform1i(a3d.useFog, RenderStateSnapshot().fog ? 1 : 0);
 }
 
 void Shader3D_DrawElementsU32(unsigned int count, const unsigned int* indices) {
@@ -534,8 +500,9 @@ void Shader3D_Begin3D() {
 	const TShaderProgram& p = CoreShaders.shader3d;
 	p.Use();
 	cacheLocations3D(p);
-	glMatrixToTMatrix(GL_PROJECTION_MATRIX, g3d_proj);
-	glMatrixToTMatrix(GL_MODELVIEW_MATRIX, g3d_view);
+	const TRenderState& state = RenderStateSnapshot();
+	g3d_proj = state.projection;
+	g3d_view = state.modelview;
 	snapEnv3D();
 }
 
@@ -610,6 +577,21 @@ void Shader3D_SetPositionColorArray(const float* pos, const sf::Color& col) {
 	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, 0, pos);
 	if (a3d.normal >= 0)   pglDisableVertexAttribArray(a3d.normal);
 	if (a3d.texcoord >= 0) pglDisableVertexAttribArray(a3d.texcoord);
+	if (a3d.color >= 0) {
+		pglDisableVertexAttribArray(a3d.color);
+		pglVertexAttrib4f(a3d.color, col.r / 255.f, col.g / 255.f, col.b / 255.f, col.a / 255.f);
+	}
+}
+
+void Shader3D_SetLitTexturedArray(const float* pos, const float* normal, const float* tex,
+                                  const sf::Color& col) {
+	if (!CoreShaders.ready) return;
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, 0, pos);
+	pglEnableVertexAttribArray(a3d.normal);
+	pglVertexAttribPointer(a3d.normal, 3, GL_FLOAT, GL_FALSE, 0, normal);
+	pglEnableVertexAttribArray(a3d.texcoord);
+	pglVertexAttribPointer(a3d.texcoord, 2, GL_FLOAT, GL_FALSE, 0, tex);
 	if (a3d.color >= 0) {
 		pglDisableVertexAttribArray(a3d.color);
 		pglVertexAttrib4f(a3d.color, col.r / 255.f, col.g / 255.f, col.b / 255.f, col.a / 255.f);

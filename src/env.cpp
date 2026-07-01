@@ -44,6 +44,7 @@ void TLight::Enable(GLenum num) const {
 	glLightfv(num, GL_DIFFUSE, diffuse);
 	glLightfv(num, GL_SPECULAR, specular);
 	glEnable(num);
+	RenderSetLight(num, position, ambient, diffuse, specular);
 }
 
 CEnvironment Env;
@@ -94,6 +95,7 @@ void CEnvironment::SetupFog() {
 	glFogf(GL_FOG_START, fog.start);
 	glFogf(GL_FOG_END, fog.end);
 	glFogfv(GL_FOG_COLOR, fog.color);
+	RenderSetFog(true, fog.start, fog.end, fog.color);
 
 	if (param.perf_level > 1) {
 		glHint(GL_FOG_HINT, GL_NICEST);
@@ -341,6 +343,7 @@ void CEnvironment::DrawFog() const {
 
 	ScopedRenderMode rm(FOG_PLANE);
 	glEnable(GL_FOG);
+	RenderSetFogEnabled(true);
 
 	// only the alpha channel is used; RGB comes from the fog colour via the
 	// shader's fog term (the plane is unlit black, fogged by eye distance).

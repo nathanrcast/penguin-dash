@@ -330,19 +330,24 @@ void RenderChar(float timestep) {
 	ClearRenderContext(colDDBackgr);
 	TestChar.highlight_node = TestChar.GetNodeName(curr_node);
 
-	glLoadIdentity();
-	glPushMatrix();
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	glLoadMatrix(id);
 	SetToolLight();
 
 	TestChar.ResetRoot();
 	TestChar.ResetJoints();
-	glTranslatef(xposition, yposition, zposition);
-	glRotatef(xrotation, 1, 0, 0);
-	glRotatef(yrotation, 0, 1, 0);
-	glRotatef(zrotation, 0, 0, 1);
+	TMatrix<4, 4> translate;
+	TMatrix<4, 4> rotX;
+	TMatrix<4, 4> rotY;
+	TMatrix<4, 4> rotZ;
+	translate.SetTranslationMatrix(xposition, yposition, zposition);
+	rotX.SetRotationMatrix(xrotation, 'x');
+	rotY.SetRotationMatrix(yrotation, 'y');
+	rotZ.SetRotationMatrix(zrotation, 'z');
+	glLoadMatrix(translate * rotX * rotY * rotZ);
 
 	if (drawcount > 0) TestChar.Draw();
-	glPopMatrix();
 	drawcount++;
 
 	// --------------- 2d screen --------------------------------------

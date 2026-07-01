@@ -17,7 +17,8 @@ The "~76 immediate-mode GL sites" headline overstated it. Reality:
 - **Vertex arrays are already the norm** (`glVertexPointer` 23, `glTexCoordPointer` 11,
   `glEnableClientState` 29, `glDrawArrays` 22). These convert mechanically to VBO + `glVertexAttribPointer`.
 - **True immediate mode was only 7 `glBegin` blocks at audit time** (localized, simple primitives).
-  After M1/M3/M4b, the remaining true immediate mode is the 2 `track_marks.cpp` blocks.
+  After M5, no active race/menu renderer path uses `glBegin`; remaining fixed-function work is cleanup,
+  tracked state, and editor/tool/test code.
 - Pipeline is **pure fixed-function — no shaders yet**, so we introduce the first shaders (2–3 small ones).
 
 Net: a concentrated, mostly-mechanical rewrite across ~8–10 files, with the real design work
@@ -33,8 +34,8 @@ front-loaded into getting the shaders + software matrix stack right (M0–M2 bel
 | `hud.cpp` | 2D HUD / speed gauge | arrays + 1 `glBegin` TRIANGLE_FAN | 2D shader; convert fan |
 | `textures.cpp` | 2D textured quads (UI/images) | arrays | 2D shader |
 | `font.cpp` | Text | (SFML text + GL) | 2D shader path |
-| `particles.cpp` | Snow particles | arrays | 3D/point shader; verify blend |
-| `track_marks.cpp` | Ski trail decals on snow | 2× `glBegin` (QUADS, QUAD_STRIP) | 3D shader; convert; verify blend |
+| `particles.cpp` | Snow particles | shader arrays | visual-verify blend/alpha |
+| `track_marks.cpp` | Ski trail decals on snow | shader triangles | visual-verify blend/alpha |
 | `tux.cpp` | Character model | generated sphere mesh + shader shadow arrays | GLU/header cleanup later |
 | `tools*.cpp`, `ogl_test.cpp`, `quadtree.cpp` | Editor tools / test / spatial | `gluLookAt`, misc | low priority / last |
 
@@ -43,8 +44,8 @@ front-loaded into getting the shaders + software matrix stack right (M0–M2 bel
 1. **Fixed-function transforms** — `ogl.cpp:166–181` (`glMatrixMode`/`glLoadIdentity`), `ogl.cpp:437`
    (`glLoadMatrixd`), `view.cpp:156/170` (`glLoadMatrix`). → software proj/modelview from `TMatrix`,
    upload MVP (+ normal matrix) as uniforms.
-2. **Immediate mode (initially 7 `glBegin`)** — `env.cpp`, `hud.cpp`, and `tux.cpp` are now converted;
-   remaining: `track_marks.cpp:117/138`. → build vertex arrays / use the batching shim (below).
+2. **Immediate mode (initially 7 `glBegin`)** — active race/menu paths are now converted. `track_marks.cpp`
+   draws shader triangles; `env.cpp`, `hud.cpp`, and `tux.cpp` were converted in earlier milestones.
 3. **Client-state vertex arrays** (`glEnableClientState`/`glVertexPointer`/`glTexCoordPointer`/
    `glNormalPointer` + `glDrawArrays`) — bulk, across terrain/env/particles/textures. → VBO +
    generic vertex attribs. Mechanical.
@@ -119,9 +120,17 @@ context switch.
   sphere vertices into arrays and draws them through the core 3D shader with constant shadow colour
   (`Shader3D_SetPositionColorArray`). Existing `TUX_SHADOW` render-mode stencil state is preserved;
   GLES2 supports this path as long as the Android surface requests a stencil buffer.
-- **M5 – Decals & snow:** `track_marks.cpp` (2 remaining `glBegin`) + `particles.cpp`; verify blend/alpha states.
-- **M6 – Cleanup:** drop `glShadeModel`; `glAlphaFunc`→`discard`; remaining GLU; editor tools last;
-  remove desktop-GL-only headers. **Full desktop GLES2 build green.**
+- **M5 – Decals & snow:** ✅ **DONE 2026-07-01.**
+  `track_marks.cpp` now emits lit textured shader triangles (removing the last active `glBegin` blocks).
+  `particles.cpp` routes race particles, near snowflakes, and snow curtains through the 3D shader helper
+  with world-space billboard quads instead of fixed-function matrix/client-state arrays. Verified:
+  `make -j2` green and desktop visual smoke confirmed track marks/snow blend/alpha look good.
+- **M6 – Cleanup:** ✅ **DONE 2026-07-01.** Renderer state is now tracked engine-side:
+  projection/modelview matrices, light 0, material, fog, texgen, texture/color-material enables, and
+  alpha discard all feed shaders without `glGet*` snapshots. Dropped `glShadeModel`, desktop
+  `GL_ALPHA_TEST`/`glAlphaFunc`, GLU calls/includes, `glGetTexLevelParameteriv`, fixed-function matrix
+  stack calls, and remaining active client-state vertex arrays. Verified: `make -j2` green and final
+  desktop visual smoke started for the GLES2-compatible renderer.
 
 Then → port_plan step 3 (SFML Android/NDK shell) with a renderer that already runs GLES2 on desktop.
 

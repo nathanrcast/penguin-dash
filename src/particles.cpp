@@ -22,6 +22,7 @@ GNU General Public License for more details.
 #include "particles.h"
 #include "textures.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "course.h"
 #include "view.h"
 #include "env.h"
@@ -227,7 +228,8 @@ struct Particle {
 
 	void Draw(const CControl* ctrl) const;
 private:
-	void draw_billboard(const CControl *ctrl, double width, double height, bool use_world_y_axis, const GLfloat* tex) const;
+	void draw_billboard(const CControl *ctrl, double width, double height, bool use_world_y_axis,
+	                    const GLfloat* tex, const sf::Color& color) const;
 };
 
 static std::list<Particle> particles;
@@ -258,12 +260,14 @@ void Particle::Draw(const CControl* ctrl) const {
 	};
 
 	const sf::Color& particle_colour = Env.ParticleColor();
-	glColor(particle_colour, particle_colour.a * alpha);
+	sf::Color draw_colour = particle_colour;
+	draw_colour.a = static_cast<uint8_t>(particle_colour.a * alpha);
 
-	draw_billboard(ctrl, cur_size, cur_size, false, tex_coords[type]);
+	draw_billboard(ctrl, cur_size, cur_size, false, tex_coords[type], draw_colour);
 }
 
-void Particle::draw_billboard(const CControl *ctrl, double width, double height, bool use_world_y_axis, const GLfloat* tex) const {
+void Particle::draw_billboard(const CControl *ctrl, double width, double height, bool use_world_y_axis,
+                              const GLfloat* tex, const sf::Color& color) const {
 	TVector3d x_vec;
 	TVector3d y_vec;
 	TVector3d z_vec;
@@ -305,15 +309,8 @@ void Particle::draw_billboard(const CControl *ctrl, double width, double height,
 		static_cast<GLfloat>(pt4.z),
 	};
 
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-	glVertexPointer(3, GL_FLOAT, 0, vtx);
-	glTexCoordPointer(2, GL_FLOAT, 0, tex);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader3D_SetTexturedArray(vtx, GL_FLOAT, tex, color);
+	Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 }
 
 void create_new_particles(const TVector3d& loc, const TVector3d& vel, std::size_t num) {
@@ -371,10 +368,15 @@ void draw_particles(const CControl *ctrl) {
 	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	glColor4f(1.f, 1.f, 1.f, 0.8f);
 
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	Shader3D_Begin3D();
+	Shader3D_SetModel3D(id);
 	for (std::list<Particle>::const_iterator p = particles.begin(); p != particles.end(); ++p) {
 		if (p->age >= 0)
 			p->Draw(ctrl);
 	}
+	Shader3D_End();
 }
 void clear_particles() {
 	particles.clear();
@@ -450,23 +452,24 @@ void generate_particles(const CControl *ctrl, double dtime, const TVector3d& pos
 static CFlakes Flakes;
 
 
-void TFlake::Draw(const TPlane& lp, const TPlane& rp, bool rotate_flake, float dir_angle) const {
+void TFlake::Draw(const TPlane& lp, const TPlane& rp, bool rotate_flake, float dir_angle,
+                  const sf::Color& color) const {
 	if ((DistanceToPlane(lp, pt) < 0) && (DistanceToPlane(rp, pt) < 0)) {
-		glPushMatrix();
-		glTranslate(pt);
-		if (rotate_flake) glRotatef(dir_angle, 0, 1, 0);
-
+		double angle = rotate_flake ? dir_angle * M_PI / 180.0 : 0.0;
+		TVector3d width(std::cos(angle) * size, 0.0, -std::sin(angle) * size);
+		TVector3d height(0.0, size, 0.0);
+		TVector3d pt1 = pt;
+		TVector3d pt2 = pt + width;
+		TVector3d pt3 = pt + width + height;
+		TVector3d pt4 = pt + height;
 		const GLfloat vtx[] = {
-			0,    0,    0,
-			size, 0,    0,
-			size, size, 0,
-			0,    size, 0
+			static_cast<GLfloat>(pt1.x), static_cast<GLfloat>(pt1.y), static_cast<GLfloat>(pt1.z),
+			static_cast<GLfloat>(pt2.x), static_cast<GLfloat>(pt2.y), static_cast<GLfloat>(pt2.z),
+			static_cast<GLfloat>(pt3.x), static_cast<GLfloat>(pt3.y), static_cast<GLfloat>(pt3.z),
+			static_cast<GLfloat>(pt4.x), static_cast<GLfloat>(pt4.y), static_cast<GLfloat>(pt4.z)
 		};
-		glVertexPointer(3, GL_FLOAT, 0, vtx);
-		glTexCoordPointer(2, GL_FLOAT, 0, tex);
-		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-		glPopMatrix();
+		Shader3D_SetTexturedArray(vtx, GL_FLOAT, tex, color);
+		Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 	}
 }
 
@@ -509,13 +512,14 @@ void TFlakeArea::Draw(const CControl *ctrl) const {
 	const sf::Color& particle_colour = Env.ParticleColor();
 	glColor(particle_colour);
 
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	Shader3D_Begin3D();
+	Shader3D_SetModel3D(id);
 	for (std::size_t i=0; i < flakes.size(); i++) {
-		flakes[i].Draw(lp, rp, rotate_flake, dir_angle);
+		flakes[i].Draw(lp, rp, rotate_flake, dir_angle, particle_colour);
 	}
-	glDisableClientState(GL_VERTEX_ARRAY);
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+	Shader3D_End();
 }
 
 void TFlakeArea::Update(float timestep, float xcoeff, float ycoeff, float zcoeff) {
@@ -764,38 +768,36 @@ void TCurtain::SetStartParams(const CControl* ctrl) {
 	}
 }
 
-void TCurtain::Draw() const {
+void TCurtain::Draw(const sf::Color& color) const {
 	Tex.BindTex(texture);
-	float halfsize = size / 2.f;
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	double halfsize = size / 2.0;
 	for (unsigned int co=0; co<numCols; co++) {
 		for (unsigned int row=0; row<numRows; row++) {
 			const TVector3d& pt = curtains[co][row].pt;
-			glPushMatrix();
-			glTranslate(pt);
-			glRotatef(-curtains[co][row].angle, 0, 1, 0);
+			double angle = curtains[co][row].angle * M_PI / 180.0;
+			TVector3d width(std::cos(angle), 0.0, std::sin(angle));
+			TVector3d yaxis(0.0, 1.0, 0.0);
+			TVector3d pt1 = pt - halfsize * width - halfsize * yaxis;
+			TVector3d pt2 = pt + halfsize * width - halfsize * yaxis;
+			TVector3d pt3 = pt + halfsize * width + halfsize * yaxis;
+			TVector3d pt4 = pt - halfsize * width + halfsize * yaxis;
 
-			static const GLshort tex[] = {
-				0, 1,
-				1, 1,
-				1, 0,
-				0, 0
+			static const GLfloat tex[] = {
+				0.f, 1.f,
+				1.f, 1.f,
+				1.f, 0.f,
+				0.f, 0.f
 			};
 			const GLfloat vtx[] = {
-				-halfsize, -halfsize, 0,
-				    halfsize, -halfsize, 0,
-				    halfsize, halfsize, 0,
-				    -halfsize, halfsize, 0
+				static_cast<GLfloat>(pt1.x), static_cast<GLfloat>(pt1.y), static_cast<GLfloat>(pt1.z),
+				static_cast<GLfloat>(pt2.x), static_cast<GLfloat>(pt2.y), static_cast<GLfloat>(pt2.z),
+				static_cast<GLfloat>(pt3.x), static_cast<GLfloat>(pt3.y), static_cast<GLfloat>(pt3.z),
+				static_cast<GLfloat>(pt4.x), static_cast<GLfloat>(pt4.y), static_cast<GLfloat>(pt4.z)
 			    };
-			glVertexPointer(3, GL_FLOAT, 0, vtx);
-			glTexCoordPointer(2, GL_SHORT, 0, tex);
-			glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-			glPopMatrix();
+			Shader3D_SetTexturedArray(vtx, GL_FLOAT, tex, color);
+			Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
 		}
 	}
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
 }
 
 void TCurtain::Update(float timestep, const TVector3d& drift, const CControl* ctrl) {
@@ -836,9 +838,14 @@ void CCurtain::Draw() {
 	glColor(particle_colour, 255);
 
 	// glEnable (GL_NORMALIZE);
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	Shader3D_Begin3D();
+	Shader3D_SetModel3D(id);
 	for (std::size_t i=0; i<curtains.size(); i++) {
-		curtains[i].Draw();
+		curtains[i].Draw(particle_colour);
 	}
+	Shader3D_End();
 }
 
 void CCurtain::Update(float timestep, const CControl *ctrl) {
