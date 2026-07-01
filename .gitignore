@@ -4,11 +4,17 @@
 *.la
 .deps/
 .libs/
+src/etr
 /etr
 /penguin-dash
+# autotools configure-generated (Makefile.am / Makefile.in stay tracked)
+Makefile
+etr_config.h
+config.h
 config.log
 config.status
 stamp-h1
+autom4te.cache/
 
 # android build
 /android/.gradle/
