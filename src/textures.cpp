@@ -23,6 +23,7 @@ GNU General Public License for more details.
 #include "spx.h"
 #include "winsys.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "gui.h"
 #include <cctype>
 
@@ -32,6 +33,14 @@ static const GLshort fullsize_texture[] = {
 	1, 1,
 	1, 0,
 	0, 0
+};
+
+// M1: same UVs as fullsize_texture, as floats for the 2D shader path.
+static const float fullsize_uv[] = {
+	0.f, 1.f,
+	1.f, 1.f,
+	1.f, 0.f,
+	0.f, 0.f
 };
 
 
@@ -63,22 +72,15 @@ void TTexture::Draw() {
 	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
 	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
 
-	glColor4f(1.0, 1.0, 1.0, 1.0);
-	const GLint vtx[] = {
-		0, 0,
-		w, 0,
-		w, h,
-		0, h
+	const float vtx[] = {
+		0.f, 0.f,
+		(float)w, 0.f,
+		(float)w, (float)h,
+		0.f, (float)h
 	};
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-	glVertexPointer(2, GL_INT, 0, vtx);
-	glTexCoordPointer(2, GL_SHORT, 0, fullsize_texture);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, fullsize_uv, 4, true, sf::Color::White);
+	Shader2D_End();
 }
 
 void TTexture::Draw(int x, int y, float size) {
@@ -101,22 +103,15 @@ void TTexture::Draw(int x, int y, float size) {
 	else left = (Winsys.resolution.width - width) / 2;
 	right = left + width;
 
-	glColor4f(1.0, 1.0, 1.0, 1.0);
 	const GLfloat vtx[] = {
 		left, bott,
 		right, bott,
 		right, top,
 		left, top
 	};
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-	glVertexPointer(2, GL_FLOAT, 0, vtx);
-	glTexCoordPointer(2, GL_SHORT, 0, fullsize_texture);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, fullsize_uv, 4, true, sf::Color::White);
+	Shader2D_End();
 }
 
 void TTexture::Draw(int x, int y, float width, float height) {
@@ -132,22 +127,15 @@ void TTexture::Draw(int x, int y, float width, float height) {
 	else left = (Winsys.resolution.width - width) / 2;
 	right = left + width;
 
-	glColor4f(1.0, 1.0, 1.0, 1.0);
 	const GLfloat vtx[] = {
 		left, bott,
 		right, bott,
 		right, top,
 		left, top
 	};
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-
-	glVertexPointer(2, GL_FLOAT, 0, vtx);
-	glTexCoordPointer(2, GL_SHORT, 0, fullsize_texture);
-	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
+	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, fullsize_uv, 4, true, sf::Color::White);
+	Shader2D_End();
 }
 
 void TTexture::DrawFrame(int x, int y, int w, int h, int frame, const sf::Color& col) {

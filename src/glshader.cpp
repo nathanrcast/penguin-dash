@@ -7,6 +7,7 @@ Licensed under the GNU General Public License; see COPYING.
 ---------------------------------------------------------------------*/
 
 #include "glshader.h"
+#include "glmatrix.h"
 #include "common.h" // Message()
 #include <SFML/Window/Context.hpp>
 #include <string>
@@ -30,6 +31,13 @@ PFNGLGETPROGRAMINFOLOGPROC  pglGetProgramInfoLog = nullptr;
 PFNGLUSEPROGRAMPROC         pglUseProgram = nullptr;
 PFNGLGETUNIFORMLOCATIONPROC pglGetUniformLocation = nullptr;
 PFNGLGETATTRIBLOCATIONPROC  pglGetAttribLocation = nullptr;
+// M1 draw path
+PFNGLUNIFORMMATRIX4FVPROC        pglUniformMatrix4fv = nullptr;
+PFNGLUNIFORM1IPROC               pglUniform1i = nullptr;
+PFNGLVERTEXATTRIB4FPROC          pglVertexAttrib4f = nullptr;
+PFNGLVERTEXATTRIBPOINTERPROC     pglVertexAttribPointer = nullptr;
+PFNGLENABLEVERTEXATTRIBARRAYPROC pglEnableVertexAttribArray = nullptr;
+PFNGLDISABLEVERTEXATTRIBARRAYPROC pglDisableVertexAttribArray = nullptr;
 
 bool g_functionsLoaded = false;
 
@@ -82,6 +90,12 @@ bool InitShaderFunctions() {
 	ok &= load(pglUseProgram, "glUseProgram");
 	ok &= load(pglGetUniformLocation, "glGetUniformLocation");
 	ok &= load(pglGetAttribLocation, "glGetAttribLocation");
+	ok &= load(pglUniformMatrix4fv, "glUniformMatrix4fv");
+	ok &= load(pglUniform1i, "glUniform1i");
+	ok &= load(pglVertexAttrib4f, "glVertexAttrib4f");
+	ok &= load(pglVertexAttribPointer, "glVertexAttribPointer");
+	ok &= load(pglEnableVertexAttribArray, "glEnableVertexAttribArray");
+	ok &= load(pglDisableVertexAttribArray, "glDisableVertexAttribArray");
 	g_functionsLoaded = ok;
 	return ok;
 }
@@ -226,5 +240,57 @@ void InitCoreShaders() {
 		Message("GLES2 scaffold (M0): core shader build FAILED — staying on fixed-function");
 
 	// M0 does not use the programs; make sure nothing is left bound.
+	if (pglUseProgram) pglUseProgram(0);
+}
+
+// --------------------------------------------------------------------
+//  M1: 2D shader draw path
+// --------------------------------------------------------------------
+static GLint a2d_pos = -1, a2d_uv = -1, a2d_col = -1;
+static GLint u2d_mvp = -1, u2d_useTex = -1, u2d_tex = -1;
+static bool  a2d_cached = false;
+
+void Shader2D_Begin(float screenW, float screenH) {
+	if (!CoreShaders.ready) return;
+	CoreShaders.shader2d.Use();
+	if (!a2d_cached) {
+		a2d_pos    = CoreShaders.shader2d.Attrib("a_position");
+		a2d_uv     = CoreShaders.shader2d.Attrib("a_texcoord");
+		a2d_col    = CoreShaders.shader2d.Attrib("a_color");
+		u2d_mvp    = CoreShaders.shader2d.Uniform("u_mvp");
+		u2d_useTex = CoreShaders.shader2d.Uniform("u_useTexture");
+		u2d_tex    = CoreShaders.shader2d.Uniform("u_tex");
+		a2d_cached = true;
+	}
+	// Match legacy Setup2dScene: glOrtho(0, w, 0, h, -1, 1), origin bottom-left.
+	TMatrix<4, 4> ortho = MakeOrtho(0, screenW, 0, screenH, -1, 1);
+	float m[16];
+	MatrixToGL(ortho, m);
+	pglUniformMatrix4fv(u2d_mvp, 1, GL_FALSE, m);
+	pglUniform1i(u2d_tex, 0);
+}
+
+void Shader2D_DrawArrays(unsigned int mode, const float* pos2, const float* uv2,
+                         int vertCount, bool useTexture, const sf::Color& color) {
+	if (!CoreShaders.ready || a2d_pos < 0) return;
+	pglUniform1i(u2d_useTex, useTexture ? 1 : 0);
+	if (a2d_col >= 0)
+		pglVertexAttrib4f(a2d_col, color.r / 255.f, color.g / 255.f, color.b / 255.f, color.a / 255.f);
+
+	pglEnableVertexAttribArray(a2d_pos);
+	pglVertexAttribPointer(a2d_pos, 2, GL_FLOAT, GL_FALSE, 0, pos2);
+	if (useTexture && a2d_uv >= 0) {
+		pglEnableVertexAttribArray(a2d_uv);
+		pglVertexAttribPointer(a2d_uv, 2, GL_FLOAT, GL_FALSE, 0, uv2);
+	}
+
+	glDrawArrays(mode, 0, vertCount);
+
+	pglDisableVertexAttribArray(a2d_pos);
+	if (useTexture && a2d_uv >= 0)
+		pglDisableVertexAttribArray(a2d_uv);
+}
+
+void Shader2D_End() {
 	if (pglUseProgram) pglUseProgram(0);
 }
