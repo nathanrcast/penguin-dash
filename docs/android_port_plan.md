@@ -22,9 +22,14 @@ Toolchain on `.13`: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0
 
 ## Sub-milestones (device-tested on Tab A9+ / OnePlus N200 — both arm64)
 
-- **A0 – Scaffold + native boot:** Gradle project reusing the OneCube template; `NativeActivity` +
-  `android_native_app_glue`; EGL GLES2 context; a clear-color render loop. Deliverable: signed APK
-  installs and boots to a solid-color screen. No ETR engine yet.
+- **A0 – Scaffold + native boot:** ✅ **DONE + device-verified 2026-07-01 on the Tab A9+** (SM_X210,
+  GLES 3.2). Gradle project reusing the OneCube template; `NativeActivity` + `android_native_app_glue`;
+  EGL GLES2 context; pulsing clear-color loop fills the full 1920×1200 surface. Two device-found bugs
+  fixed vs. the first build: (1) `APP_CMD_INIT_WINDOW` fires pre-layout so the window is 1×1 at surface
+  creation — split context-init from surface-creation and recreate the surface on window-size change
+  (`egl_check_resize`, also covers rotation/background); (2) the poll timeout must be re-evaluated each
+  `ALooper_pollAll` call — hoisting it into a variable hangs the loop when `running` flips true
+  mid-iteration. No ETR engine yet.
 - **A1 – Engine bring-up:** compile ETR `src/*.cpp` into `libpenguindash.so` via CMake (autotools not
   used on Android). Replace `winsys`/context with the EGL shim; drive ETR's main loop from the native
   glue; render the first menu frame through the existing GLES2 renderer. Prune the vestigial fixed-

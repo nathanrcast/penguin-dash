@@ -8,6 +8,7 @@
 
 #include <android_native_app_glue.h>
 #include <android/log.h>
+#include <android/native_window.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <cmath>
@@ -23,11 +24,31 @@ struct Engine {
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
+    EGLConfig config = nullptr;
+    EGLint format = 0;     // native visual id for the chosen config
     int32_t width = 0;
     int32_t height = 0;
     bool running = false;  // true once we hold a usable GL surface
     float t = 0.0f;        // animates the clear colour so it's visibly alive
 };
+
+// (Re)create the window surface for the current app->window and make it current.
+// Split from context creation so we can rebuild the surface when the window is
+// resized/recreated (rotation, background, or the pre-layout 1x1 race on some
+// devices where APP_CMD_INIT_WINDOW fires before the view is laid out).
+bool egl_create_surface(Engine* e) {
+    ANativeWindow_setBuffersGeometry(e->app->window, 0, 0, e->format);
+    e->surface = eglCreateWindowSurface(e->display, e->config, e->app->window, nullptr);
+    if (e->surface == EGL_NO_SURFACE) { LOGW("eglCreateWindowSurface failed"); return false; }
+    if (!eglMakeCurrent(e->display, e->surface, e->surface, e->context)) {
+        LOGW("eglMakeCurrent failed");
+        return false;
+    }
+    eglQuerySurface(e->display, e->surface, EGL_WIDTH, &e->width);
+    eglQuerySurface(e->display, e->surface, EGL_HEIGHT, &e->height);
+    LOGI("EGL surface: %dx%d, GL_VERSION=%s", e->width, e->height, glGetString(GL_VERSION));
+    return true;
+}
 
 bool egl_init(Engine* e) {
     const EGLint configAttribs[] = {
@@ -57,29 +78,31 @@ bool egl_init(Engine* e) {
     // native visual id.
     EGLint format = 0;
     eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &format);
-    ANativeWindow_setBuffersGeometry(e->app->window, 0, 0, format);
-
-    EGLSurface surface = eglCreateWindowSurface(display, config, e->app->window, nullptr);
-    if (surface == EGL_NO_SURFACE) { LOGW("eglCreateWindowSurface failed"); return false; }
 
     EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
     if (context == EGL_NO_CONTEXT) { LOGW("eglCreateContext failed"); return false; }
 
-    if (!eglMakeCurrent(display, surface, surface, context)) {
-        LOGW("eglMakeCurrent failed");
-        return false;
-    }
-
-    eglQuerySurface(display, surface, EGL_WIDTH, &e->width);
-    eglQuerySurface(display, surface, EGL_HEIGHT, &e->height);
-
     e->display = display;
-    e->surface = surface;
+    e->config = config;
+    e->format = format;
     e->context = context;
-    e->running = true;
 
-    LOGI("EGL GLES2 up: %dx%d, GL_VERSION=%s", e->width, e->height, glGetString(GL_VERSION));
+    if (!egl_create_surface(e)) return false;
+    e->running = true;
     return true;
+}
+
+// Rebuild the surface if the native window has since been laid out to a new size
+// (handles the 1x1-at-init race without waiting on a resize event).
+void egl_check_resize(Engine* e) {
+    if (!e->running || e->app->window == nullptr) return;
+    int32_t w = ANativeWindow_getWidth(e->app->window);
+    int32_t h = ANativeWindow_getHeight(e->app->window);
+    if (w == e->width && h == e->height) return;
+    eglMakeCurrent(e->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    if (e->surface != EGL_NO_SURFACE) eglDestroySurface(e->display, e->surface);
+    e->surface = EGL_NO_SURFACE;
+    egl_create_surface(e);
 }
 
 void egl_term(Engine* e) {
@@ -97,6 +120,7 @@ void egl_term(Engine* e) {
 
 void draw_frame(Engine* e) {
     if (!e->running) return;
+    egl_check_resize(e);
     e->t += 0.02f;
     // slow cool-blue pulse — obviously "alive", obviously not the game yet
     float b = 0.5f + 0.5f * std::sin(e->t);
@@ -131,9 +155,12 @@ void android_main(android_app* app) {
     while (true) {
         int events;
         android_poll_source* source;
-        // Block only when we have nothing to draw; otherwise pump events and render.
-        int timeout = engine.running ? 0 : -1;
-        while (ALooper_pollAll(timeout, nullptr, &events, reinterpret_cast<void**>(&source)) >= 0) {
+        // Timeout must be re-evaluated on every poll: block (-1) while we have no
+        // surface, but return immediately (0) once running so we fall through to
+        // draw each frame. Hoisting it into a variable would leave it stale when
+        // `running` flips true mid-loop and hang on the blocking poll.
+        while (ALooper_pollAll(engine.running ? 0 : -1, nullptr, &events,
+                               reinterpret_cast<void**>(&source)) >= 0) {
             if (source != nullptr) source->process(app, source);
             if (app->destroyRequested != 0) {
                 egl_term(&engine);
