@@ -26,12 +26,16 @@ still shaped with spheres.
 
 #include "tux.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "spx.h"
 #include "textures.h"
 #include "course.h"
 #include "physics.h"
 #include <GL/glu.h>
 #include <algorithm>
+#include <map>
+#include <vector>
+#include <cmath>
 
 #define MAX_ARM_ANGLE2 30.0
 #define MAX_PADDLING_ANGLE2 35.0
@@ -363,18 +367,57 @@ void CCharShape::CreateMaterial(const std::string& line) {
 //				drawing
 // --------------------------------------------------------------------
 
+// GLES2: a generated unit-sphere mesh replaces gluSphere. Positions lie on the
+// unit sphere, so they double as normals. Cached per division count; matches
+// gluSphere(1, 2*div, div) (poles on z, div stacks, 2*div slices).
+namespace {
+struct TSphereMesh {
+	std::vector<float> verts;      // xyz on unit sphere (== normal)
+	std::vector<unsigned short> idx;
+};
+std::map<int, TSphereMesh> g_sphereMeshes;
+
+const TSphereMesh& GetSphereMesh(int divisions) {
+	auto it = g_sphereMeshes.find(divisions);
+	if (it != g_sphereMeshes.end()) return it->second;
+
+	TSphereMesh m;
+	int stacks = divisions;
+	int slices = 2 * divisions;
+	if (stacks < 2) stacks = 2;
+	if (slices < 3) slices = 3;
+	for (int i = 0; i <= stacks; i++) {
+		double phi = M_PI * (double)i / stacks; // 0 = north pole (z=+1)
+		double z = std::cos(phi), r = std::sin(phi);
+		for (int j = 0; j <= slices; j++) {
+			double theta = 2.0 * M_PI * (double)j / slices;
+			m.verts.push_back((float)(r * std::cos(theta)));
+			m.verts.push_back((float)(r * std::sin(theta)));
+			m.verts.push_back((float)z);
+		}
+	}
+	for (int i = 0; i < stacks; i++) {
+		for (int j = 0; j < slices; j++) {
+			unsigned short a = (unsigned short)(i * (slices + 1) + j);
+			unsigned short b = (unsigned short)(a + slices + 1);
+			// CCW outward winding (front faces, matching GLU_OUTSIDE + cull)
+			m.idx.push_back(a);     m.idx.push_back(b);     m.idx.push_back(a + 1);
+			m.idx.push_back(a + 1); m.idx.push_back(b);     m.idx.push_back(b + 1);
+		}
+	}
+	auto res = g_sphereMeshes.emplace(divisions, std::move(m));
+	return res.first->second;
+}
+} // namespace
+
 void CCharShape::DrawCharSphere(int num_divisions) const {
-	GLUquadricObj *qobj = gluNewQuadric();
-	gluQuadricDrawStyle(qobj, GLU_FILL);
-	gluQuadricOrientation(qobj, GLU_OUTSIDE);
-	gluQuadricNormals(qobj, GLU_SMOOTH);
-	gluSphere(qobj, 1.0, (GLint)2.0 * num_divisions, num_divisions);
-	gluDeleteQuadric(qobj);
+	const TSphereMesh& m = GetSphereMesh(num_divisions);
+	Shader3D_SetPosNormalArrays(m.verts.data(), m.verts.data()); // unit sphere: pos == normal
+	Shader3D_DrawElementsU16((unsigned int)m.idx.size(), m.idx.data());
 }
 
-void CCharShape::DrawNodes(const TCharNode *node) {
-	glPushMatrix();
-	glMultMatrix(node->trans);
+void CCharShape::DrawNodes(const TCharNode *node, const TMatrix<4, 4>& parentModel) {
+	TMatrix<4, 4> model = parentModel * node->trans; // replaces glPushMatrix/glMultMatrix
 
 	if (node->node_name == highlight_node) highlighted = true;
 	const TCharMaterial *mat;
@@ -386,32 +429,32 @@ void CCharShape::DrawNodes(const TCharNode *node) {
 	}
 
 	if (node->visible == true) {
-		set_material(mat->diffuse, mat->specular, mat->exp);
-
+		Shader3D_SetMaterial(mat->diffuse, mat->specular, mat->exp);
+		Shader3D_SetModel3D(model);
 		DrawCharSphere(node->divisions);
 	}
 // -------------- recursive loop -------------------------------------
 	TCharNode *child = node->child;
 	while (child != nullptr) {
-		DrawNodes(child);
+		DrawNodes(child, model);
 		if (child->node_name == highlight_node) highlighted = false;
 		child = child->next;
 	}
-// -------------------------------------------------------------------
-	glPopMatrix();
 }
 
 void CCharShape::Draw() {
-	static const float dummy_color[] = {0.0, 0.0, 0.0, 1.0};
-
-	glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, dummy_color);
 	ScopedRenderMode rm(TUX);
 	glEnable(GL_NORMALIZE);
 
 	const TCharNode *node = GetNode(0);
 	if (node == nullptr) return;
 
-	DrawNodes(node);
+	Shader3D_Begin3D();
+	TMatrix<4, 4> id;
+	id.SetIdentity();
+	DrawNodes(node, id);
+	Shader3D_End();
+
 	glDisable(GL_NORMALIZE);
 	if (param.perf_level > 2 && g_game.argument == 0) DrawShadow();
 	highlighted = false;

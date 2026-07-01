@@ -607,6 +607,36 @@ void Shader3D_DrawArrays(unsigned int mode, int count) {
 	glDrawArrays(mode, 0, count);
 }
 
+// Per-object material (Tux nodes): set ambient+diffuse (= diffuse, as
+// GL_AMBIENT_AND_DIFFUSE does) and specular/shininess. Used when color-material
+// is off (lit objects with an explicit material).
+void Shader3D_SetMaterial(const sf::Color& diffuse, const sf::Color& specular, float shininess) {
+	if (!CoreShaders.ready) return;
+	float d[4] = { diffuse.r / 255.f, diffuse.g / 255.f, diffuse.b / 255.f, diffuse.a / 255.f };
+	float s[4] = { specular.r / 255.f, specular.g / 255.f, specular.b / 255.f, specular.a / 255.f };
+	pglUniform4fv(a3d.matAmbient, 1, d);
+	pglUniform4fv(a3d.matDiffuse, 1, d);
+	pglUniform4fv(a3d.matSpecular, 1, s);
+	pglUniform1f(a3d.shininess, shininess);
+}
+
+// Lit untextured mesh (Tux sphere): separate position + normal arrays (both
+// tight float3; for a unit sphere the caller passes the same buffer for both).
+void Shader3D_SetPosNormalArrays(const float* pos, const float* normal) {
+	if (!CoreShaders.ready) return;
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, 0, pos);
+	pglEnableVertexAttribArray(a3d.normal);
+	pglVertexAttribPointer(a3d.normal, 3, GL_FLOAT, GL_FALSE, 0, normal);
+	if (a3d.color >= 0)    pglDisableVertexAttribArray(a3d.color);
+	if (a3d.texcoord >= 0) pglDisableVertexAttribArray(a3d.texcoord);
+}
+
+void Shader3D_DrawElementsU16(unsigned int count, const unsigned short* indices) {
+	if (!CoreShaders.ready || a3d.pos < 0) return;
+	glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_SHORT, indices);
+}
+
 void Shader3D_End() {
 	if (!CoreShaders.ready) return;
 	if (a3d.pos >= 0)      pglDisableVertexAttribArray(a3d.pos);

@@ -91,6 +91,11 @@ void Shader3D_SetTexturedArray(const void* pos, unsigned int posType, const floa
 void Shader3D_SetColoredArray(const float* pos, const unsigned char* color);
 void Shader3D_DrawArrays(unsigned int mode, int count);
 
+// Character (M4): explicit material + lit untextured mesh (Tux spheres).
+void Shader3D_SetMaterial(const sf::Color& diffuse, const sf::Color& specular, float shininess);
+void Shader3D_SetPosNormalArrays(const float* pos, const float* normal);
+void Shader3D_DrawElementsU16(unsigned int count, const unsigned short* indices);
+
 // Disable the attrib arrays and restore the fixed-function pipeline.
 void Shader3D_End();
 
