@@ -21,6 +21,7 @@ GNU General Public License for more details.
 #include <string>
 #include <list>
 #include <unordered_map>
+#include <ios> // std::streamsize (came transitively via SFML on desktop)
 
 extern const std::string emptyString;
 extern const std::string errorString;

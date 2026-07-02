@@ -124,6 +124,9 @@ void check_gl_error() {
 	}
 }
 
+#ifndef __ANDROID__
+// GL_EXT_compiled_vertex_array is a desktop-GL optimization absent from GLES2.
+// The lock/unlock pointers were already unused after the GLES rewrite; skip on Android.
 PFNGLLOCKARRAYSEXTPROC glLockArraysEXT_p = nullptr;
 PFNGLUNLOCKARRAYSEXTPROC glUnlockArraysEXT_p = nullptr;
 
@@ -137,6 +140,9 @@ void InitOpenglExtensions() {
 		glUnlockArraysEXT_p = nullptr;
 	}
 }
+#else
+void InitOpenglExtensions() {}
+#endif
 
 void PrintGLInfo() {
 	Message("Gl vendor: ", (char*)glGetString(GL_VENDOR));

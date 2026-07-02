@@ -39,10 +39,12 @@ enum TRenderMode {
 };
 
 
+#ifndef __ANDROID__ // desktop-only GL_EXT_compiled_vertex_array (absent from GLES2)
 #undef GL_EXT_compiled_vertex_array
 
 extern PFNGLLOCKARRAYSEXTPROC glLockArraysEXT_p;
 extern PFNGLUNLOCKARRAYSEXTPROC glUnlockArraysEXT_p;
+#endif
 
 void check_gl_error();
 void InitOpenglExtensions();

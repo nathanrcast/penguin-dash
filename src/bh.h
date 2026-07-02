@@ -26,7 +26,12 @@ GNU General Public License for more details.
 #include <cstddef>
 #include <string>
 
-#include <GL/gl.h>
+#ifdef __ANDROID__
+#	include <GLES2/gl2.h>
+#	include <GLES2/gl2ext.h>
+#else
+#	include <GL/gl.h>
+#endif
 #include <SFML/System.hpp>
 #include <SFML/Window.hpp>
 #include <SFML/Graphics.hpp>
@@ -61,6 +66,13 @@ GNU General Public License for more details.
 #elif defined OS_WIN32_MINGW
 #	include <dirent.h>
 #	include <GL/glext.h>
+#	define SEP "/"
+#elif defined(__ANDROID__) // Android: bionic has the POSIX bits, GL comes from GLES2 above
+#	include <unistd.h>
+#	include <sys/types.h>
+#	include <pwd.h>
+#	include <dirent.h>
+#	include <sys/time.h>
 #	define SEP "/"
 #else // Assume Unix platform (Linux, Mac OS X, BSD, ...)
 #	include <unistd.h>
