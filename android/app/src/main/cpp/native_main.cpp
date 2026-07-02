@@ -1,17 +1,20 @@
-// Penguin Dash — Android native entry (port step 3, milestone A0).
+// Penguin Dash — Android native entry (port step 3, milestones A0 + A1c).
 //
 // A pure-NativeActivity host: android_native_app_glue drives the lifecycle, we
-// stand up an EGL GLES2 context on the activity's window and run a clear-color
-// loop. This proves the app boots, signs, installs, and holds a live GLES2
-// surface — the foundation the (already GLES2-native) ETR renderer plugs into
-// at milestone A1. No SFML, no Java.
+// stand up an EGL GLES2 context on the activity's window, then hand control to
+// the ETR engine (pd_engine_main) which renders through the SFML-compat layer.
+// The engine reaches the surface/input only through native_bridge.h. No Java.
 
 #include <android_native_app_glue.h>
 #include <android/log.h>
 #include <android/native_window.h>
+#include <android/input.h>
+#include <android/keycodes.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
-#include <cmath>
+#include <deque>
+
+#include "native_bridge.h"
 
 #define LOG_TAG "PenguinDash"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -29,8 +32,11 @@ struct Engine {
     int32_t width = 0;
     int32_t height = 0;
     bool running = false;  // true once we hold a usable GL surface
-    float t = 0.0f;        // animates the clear colour so it's visibly alive
+    bool closing = false;  // activity asked to finish
+    std::deque<pd::InputEvent> input;  // filled on the glue thread, drained by the engine
 };
+
+Engine g_engine;
 
 // (Re)create the window surface for the current app->window and make it current.
 // Split from context creation so we can rebuild the surface when the window is
@@ -79,17 +85,30 @@ bool egl_init(Engine* e) {
     EGLint format = 0;
     eglGetConfigAttrib(display, config, EGL_NATIVE_VISUAL_ID, &format);
 
-    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
-    if (context == EGL_NO_CONTEXT) { LOGW("eglCreateContext failed"); return false; }
+    // Reuse a context across surface loss (background/foreground) so GL objects
+    // survive; only create it once.
+    if (e->context == EGL_NO_CONTEXT) {
+        e->context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
+        if (e->context == EGL_NO_CONTEXT) { LOGW("eglCreateContext failed"); return false; }
+    }
 
     e->display = display;
     e->config = config;
     e->format = format;
-    e->context = context;
 
     if (!egl_create_surface(e)) return false;
     e->running = true;
     return true;
+}
+
+// Tear down just the surface (context is kept for the app's lifetime).
+void egl_drop_surface(Engine* e) {
+    if (e->display != EGL_NO_DISPLAY) {
+        eglMakeCurrent(e->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (e->surface != EGL_NO_SURFACE) eglDestroySurface(e->display, e->surface);
+    }
+    e->surface = EGL_NO_SURFACE;
+    e->running = false;
 }
 
 // Rebuild the surface if the native window has since been laid out to a new size
@@ -99,35 +118,19 @@ void egl_check_resize(Engine* e) {
     int32_t w = ANativeWindow_getWidth(e->app->window);
     int32_t h = ANativeWindow_getHeight(e->app->window);
     if (w == e->width && h == e->height) return;
-    eglMakeCurrent(e->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    if (e->surface != EGL_NO_SURFACE) eglDestroySurface(e->display, e->surface);
-    e->surface = EGL_NO_SURFACE;
+    egl_drop_surface(e);
     egl_create_surface(e);
+    e->running = (e->surface != EGL_NO_SURFACE);
 }
 
 void egl_term(Engine* e) {
+    egl_drop_surface(e);
     if (e->display != EGL_NO_DISPLAY) {
-        eglMakeCurrent(e->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         if (e->context != EGL_NO_CONTEXT) eglDestroyContext(e->display, e->context);
-        if (e->surface != EGL_NO_SURFACE) eglDestroySurface(e->display, e->surface);
         eglTerminate(e->display);
     }
     e->display = EGL_NO_DISPLAY;
-    e->surface = EGL_NO_SURFACE;
     e->context = EGL_NO_CONTEXT;
-    e->running = false;
-}
-
-void draw_frame(Engine* e) {
-    if (!e->running) return;
-    egl_check_resize(e);
-    e->t += 0.02f;
-    // slow cool-blue pulse — obviously "alive", obviously not the game yet
-    float b = 0.5f + 0.5f * std::sin(e->t);
-    glViewport(0, 0, e->width, e->height);
-    glClearColor(0.05f, 0.15f + 0.15f * b, 0.35f + 0.25f * b, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    eglSwapBuffers(e->display, e->surface);
 }
 
 void handle_cmd(android_app* app, int32_t cmd) {
@@ -137,36 +140,111 @@ void handle_cmd(android_app* app, int32_t cmd) {
             if (app->window != nullptr) egl_init(e);
             break;
         case APP_CMD_TERM_WINDOW:
-            egl_term(e);
+            egl_drop_surface(e);   // keep the context; surface returns on re-init
+            break;
+        case APP_CMD_DESTROY:
+            e->closing = true;
             break;
         default:
             break;
     }
 }
 
+// Translate a native input event into our queue. Returns 1 when consumed.
+int32_t handle_input(android_app* app, AInputEvent* ev) {
+    Engine* e = static_cast<Engine*>(app->userData);
+    int32_t type = AInputEvent_getType(ev);
+    if (type == AINPUT_EVENT_TYPE_MOTION) {
+        int32_t action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
+        int x = static_cast<int>(AMotionEvent_getX(ev, 0));
+        int y = static_cast<int>(AMotionEvent_getY(ev, 0));
+        pd::EvKind k;
+        switch (action) {
+            case AMOTION_EVENT_ACTION_DOWN:   k = pd::EvKind::PointerDown; break;
+            case AMOTION_EVENT_ACTION_MOVE:   k = pd::EvKind::PointerMove; break;
+            case AMOTION_EVENT_ACTION_UP:
+            case AMOTION_EVENT_ACTION_CANCEL: k = pd::EvKind::PointerUp;   break;
+            default: return 1;
+        }
+        e->input.push_back({k, x, y, 0});
+        return 1;
+    }
+    if (type == AINPUT_EVENT_TYPE_KEY) {
+        int32_t action = AKeyEvent_getAction(ev);
+        int code = AKeyEvent_getKeyCode(ev);
+        if (action == AKEY_EVENT_ACTION_DOWN)
+            e->input.push_back({pd::EvKind::KeyDown, 0, 0, code});
+        else if (action == AKEY_EVENT_ACTION_UP)
+            e->input.push_back({pd::EvKind::KeyUp, 0, 0, code});
+        return 1;
+    }
+    return 0;
+}
+
+// Service the looper once. block=true parks until an event arrives (used while we
+// have no surface); block=false returns immediately (per-frame pump).
+void pump(bool block) {
+    Engine* e = &g_engine;
+    int events;
+    android_poll_source* source;
+    while (ALooper_pollAll(block ? -1 : 0, nullptr, &events,
+                           reinterpret_cast<void**>(&source)) >= 0) {
+        if (source != nullptr) source->process(e->app, source);
+        if (e->app->destroyRequested != 0) { e->closing = true; return; }
+        if (block) break;   // one blocking wait is enough; caller re-checks state
+    }
+    egl_check_resize(e);
+}
+
 } // namespace
 
-void android_main(android_app* app) {
-    Engine engine;
-    engine.app = app;
-    app->userData = &engine;
-    app->onAppCmd = handle_cmd;
+// ---- native_bridge.h implementations ----
+namespace pd {
 
-    while (true) {
-        int events;
-        android_poll_source* source;
-        // Timeout must be re-evaluated on every poll: block (-1) while we have no
-        // surface, but return immediately (0) once running so we fall through to
-        // draw each frame. Hoisting it into a variable would leave it stale when
-        // `running` flips true mid-loop and hang on the blocking poll.
-        while (ALooper_pollAll(engine.running ? 0 : -1, nullptr, &events,
-                               reinterpret_cast<void**>(&source)) >= 0) {
-            if (source != nullptr) source->process(app, source);
-            if (app->destroyRequested != 0) {
-                egl_term(&engine);
-                return;
-            }
-        }
-        draw_frame(&engine);
-    }
+bool SurfaceReady() { return g_engine.running && g_engine.surface != EGL_NO_SURFACE; }
+
+void GetSurfaceSize(unsigned& w, unsigned& h) {
+    w = static_cast<unsigned>(g_engine.width);
+    h = static_cast<unsigned>(g_engine.height);
+}
+
+void SwapBuffers() {
+    Engine* e = &g_engine;
+    // If the surface is momentarily gone (backgrounded), park until it comes
+    // back or the app is closing — never spin the engine loop on a dead context.
+    while (!SurfaceReady() && !e->closing)
+        pump(true);
+    if (SurfaceReady())
+        eglSwapBuffers(e->display, e->surface);
+}
+
+void PumpEvents() { pump(false); }
+
+bool ShouldClose() { return g_engine.closing || g_engine.app->destroyRequested != 0; }
+
+bool PollInput(InputEvent& out) {
+    if (g_engine.input.empty()) return false;
+    out = g_engine.input.front();
+    g_engine.input.pop_front();
+    return true;
+}
+
+} // namespace pd
+
+void android_main(android_app* app) {
+    g_engine = Engine{};
+    g_engine.app = app;
+    app->userData = &g_engine;
+    app->onAppCmd = handle_cmd;
+    app->onInputEvent = handle_input;
+
+    // Wait for the first usable surface before booting the engine (it needs a
+    // live GLES2 context for shader/texture init).
+    while (!pd::SurfaceReady() && !g_engine.closing)
+        pump(true);
+
+    if (pd::SurfaceReady())
+        pd_engine_main();   // runs the ETR init + main loop; returns on quit
+
+    egl_term(&g_engine);
 }

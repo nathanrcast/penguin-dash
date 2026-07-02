@@ -58,12 +58,28 @@ Toolchain on `.13`: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0
     `tux`, `textures`, `ogl`, `ogl_test`, `tools`. **Verified:** desktop `etr` still builds+links (exit 0);
     every render TU now compiles under the NDK. Kept the still-valid GLES2 fixed state
     (`GL_DEPTH_TEST`/`GL_CULL_FACE`/`GL_BLEND`/`GL_STENCIL_TEST`, `glDepthMask/Func`, stencil ops).
-  - **A1c (NEXT — the active NDK blocker): winsys/input on EGL.** The full engine does not link yet: only
-    `winsys.cpp` fails to compile — the SFML platform layer still hits the compat shim's gaps
-    (`RenderWindow::setKeyRepeatEnabled`, `sf::Texture::create`/`copyToImage`, `sf::Image::saveToFile` —
-    the window setup + screenshot path). Wire `android_main`→engine init and replace the `winsys` window/
-    input/screenshot surface with the EGL shim (extend `sfml_compat` or gate the desktop-only screenshot),
-    then A1d (real `Texture`/`Font`/`Text`/`Sprite` draw on stb + Shader2D) → first menu frame.
+  - **A1c DONE + device-verified 2026-07-01 on the Tab A9+:** the full engine now links into
+    `libpenguindash.so` and `android_main` drives the real ETR init + `State::manager.Run` loop on the live
+    EGL surface. Pieces: (1) `native_bridge.h` — the seam between the raw EGL/glue host and the engine:
+    `SurfaceReady`/`GetSurfaceSize`/`SwapBuffers`/`PumpEvents`/`ShouldClose`/`PollInput`; (2) `native_main.cpp`
+    refactored — file-scope `Engine`, context kept across surface loss (background/foreground), `onInputEvent`
+    → input queue, `android_main` waits for the first surface then calls `pd_engine_main()`; (3)
+    `android_entry.cpp` (new, replaces the excluded `main.cpp`) — defines `g_game` + the init sequence, made
+    asset-load-failure-tolerant (logs + continues, no abort, until A4); (4) `sfml_compat.cpp` Window bridged to
+    the surface — `display`→`PumpEvents`+`eglSwapBuffers`, `getSize`→real surface px, `pollEvent`→`AInputEvent`
+    (touch→mouse, keys via `MapKey`: BACK/ESC→Escape, ENTER/DPAD-center→Return, DPAD→arrows), `Mouse::getPosition`
+    cached from pointers, `RenderTarget::clear`→`glClear`; (5) `winsys.cpp` — `setKeyRepeatEnabled` shim (no-op),
+    `TakeScreenshot` gated off on Android (needs A4/stb), and `resolution` adopts the real surface size; (6)
+    `CTexture::GetSFTexture` made null-safe (missing texture → empty, matching its `GetTexture` sibling) so the
+    loop survives the asset-less state. **Verified:** boots on the A9+ (EGL 1920×1200, GLES 3.2), runs the loop
+    with no crash (process stays alive), clears the full surface to the GUI bg `colBackgr` (102,153,204) each
+    frame via the bridged swap; tap + dpad input exercised without crashing.
+  - **A1d + A4 (NEXT, coupled): real 2D draw + APK assets → first menu frame.** The loop runs but draws
+    nothing — `Texture`/`Font`/`Text`/`Sprite`/`Image` are still shim stubs and there are no assets on device
+    (`LoadTextureList` fails, logged). A1d = implement those on `stb_image`/`stb_truetype` + the GLES2 Shader2D
+    path (add stb to `cpp/third_party`); A4 = package `data/` into APK assets, `AAssetManager`-backed IO,
+    extract-on-first-run keyed on versionCode (OneCube pattern). Both are needed before the logo/menu text
+    actually appear — do them together.
 - **A2 – Input (touch + tilt):** `AInputEvent` touch → menu/UI + on-screen buttons (brake/jump/paddle);
   `ASensor` accelerometer → steering, with deadzone/sensitivity tuned for ages 6–10.
 - **A3 – Audio:** replace `sf::Music`/`sf::Sound` with Oboe (music + SFX).

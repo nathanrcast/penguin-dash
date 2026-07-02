@@ -190,7 +190,11 @@ TTexture* CTexture::GetTexture(std::size_t idx) const {
 }
 
 const sf::Texture& CTexture::GetSFTexture(std::size_t idx) const {
-	return CommonTex[idx]->texture;
+	// Null-safe: a missing texture (e.g. before APK assets land on Android, A4)
+	// yields an empty texture rather than dereferencing past an empty list.
+	static const sf::Texture empty;
+	const TTexture* t = GetTexture(idx);
+	return t ? t->texture : empty;
 }
 
 bool CTexture::BindTex(std::size_t idx) {

@@ -107,6 +107,12 @@ void CWinsys::SetupVideoMode(const TScreenRes& res) {
 	window.create(sf::VideoMode(resolution.width, resolution.height, bpp), WINDOW_TITLE, style, ctx);
 	if (param.framerate)
 		window.setFramerateLimit(param.framerate);
+
+#ifdef __ANDROID__
+	// The window is the device's EGL surface, not a resizable desktop window —
+	// drive the engine at the actual surface resolution.
+	resolution = TScreenRes(window.getSize().x, window.getSize().y);
+#endif
 #ifdef _WIN32
 #ifdef UNICODE
 	HICON icon = LoadIcon(GetModuleHandle(NULL), (LPCWSTR)IDI_APPLICATION);
@@ -171,6 +177,11 @@ void CWinsys::PrintJoystickInfo() const {
 }
 
 void CWinsys::TakeScreenshot() const {
+#ifdef __ANDROID__
+	// Screenshot needs the stb_image_write path that arrives with A1d/A4 assets;
+	// no-op for now so the shared winsys stays platform-neutral.
+	return;
+#else
 	sf::Texture tex;
 	tex.create(window.getSize().x, window.getSize().y);
 	tex.update(window);
@@ -193,4 +204,5 @@ void CWinsys::TakeScreenshot() const {
 
 	path += SCREENSHOT_FORMAT;
 	img.saveToFile(path);
+#endif
 }

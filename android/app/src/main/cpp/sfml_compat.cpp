@@ -12,6 +12,35 @@
 #include <SFML/Audio.hpp>
 #include <SFML/Window/Context.hpp>
 #include <EGL/egl.h>
+#include <GLES2/gl2.h>
+#include <android/keycodes.h>
+
+#include "native_bridge.h"
+
+namespace {
+// Last known pointer position (surface pixels), returned by sf::Mouse and used
+// by the state manager to place clicks. Updated as pointer events are drained.
+int g_pointer_x = 0;
+int g_pointer_y = 0;
+
+// Android keycode -> the handful of sf::Keyboard keys the menus/gameplay need.
+sf::Keyboard::Key MapKey(int code) {
+    using K = sf::Keyboard;
+    switch (code) {
+        case AKEYCODE_BACK:
+        case AKEYCODE_ESCAPE:       return K::Escape;
+        case AKEYCODE_ENTER:
+        case AKEYCODE_DPAD_CENTER:
+        case AKEYCODE_BUTTON_A:     return K::Return;
+        case AKEYCODE_DPAD_UP:      return K::Up;
+        case AKEYCODE_DPAD_DOWN:    return K::Down;
+        case AKEYCODE_DPAD_LEFT:    return K::Left;
+        case AKEYCODE_DPAD_RIGHT:   return K::Right;
+        case AKEYCODE_SPACE:        return K::Space;
+        default:                    return K::Unknown;
+    }
+}
+} // namespace
 
 namespace sf {
 
@@ -28,33 +57,77 @@ const Color Color::Transparent(0, 0, 0, 0);
 const BlendMode BlendAlpha = {};
 const RenderStates RenderStates::Default = RenderStates();
 
-// ---- Keyboard / Mouse / Joystick (TODO A1c/A2) ----
+// ---- Keyboard / Mouse / Joystick (A1c: pointer cache; A2: tilt/keys) ----
 bool Keyboard::isKeyPressed(Key) { return false; }
-Vector2i Mouse::getPosition() { return Vector2i(0, 0); }
+Vector2i Mouse::getPosition() { return Vector2i(g_pointer_x, g_pointer_y); }
 bool Joystick::isConnected(unsigned int) { return false; }
 unsigned int Joystick::getButtonCount(unsigned int) { return 0; }
 bool Joystick::hasAxis(unsigned int, Axis) { return false; }
 float Joystick::getAxisPosition(unsigned int, Axis) { return 0.f; }
 
-// ---- VideoMode / Window (TODO A1c: bridge to native_main EGL surface) ----
-VideoMode VideoMode::getDesktopMode() { return VideoMode(1920, 1080, 32); }
+// ---- VideoMode / Window (A1c: bridged to native_main's EGL surface) ----
+VideoMode VideoMode::getDesktopMode() {
+    unsigned w = 0, h = 0;
+    pd::GetSurfaceSize(w, h);
+    if (w == 0 || h == 0) { w = 1920; h = 1080; }
+    return VideoMode(w, h, 32);
+}
 
 Window::Window() : m_size(0, 0), m_open(false) {}
 Window::~Window() {}
-void Window::create(VideoMode mode, const String&, Uint32, const ContextSettings&) {
-    m_size = Vector2u(mode.width, mode.height);
+void Window::create(VideoMode, const String&, Uint32, const ContextSettings&) {
+    // The window already exists (the EGL surface). Adopt its real pixel size and
+    // ignore the requested VideoMode.
+    unsigned w = 0, h = 0;
+    pd::GetSurfaceSize(w, h);
+    m_size = Vector2u(w, h);
     m_open = true;
 }
 void Window::close() { m_open = false; }
-bool Window::isOpen() const { return m_open; }
-bool Window::pollEvent(Event&) { return false; }
-void Window::display() {}
+bool Window::isOpen() const { return m_open && !pd::ShouldClose(); }
+bool Window::pollEvent(Event& event) {
+    pd::InputEvent ie;
+    if (!pd::PollInput(ie)) return false;
+    switch (ie.kind) {
+        case pd::EvKind::PointerDown:
+            g_pointer_x = ie.x; g_pointer_y = ie.y;
+            event.type = Event::MouseButtonPressed;
+            event.mouseButton.button = Mouse::Left;
+            event.mouseButton.x = ie.x; event.mouseButton.y = ie.y;
+            break;
+        case pd::EvKind::PointerUp:
+            g_pointer_x = ie.x; g_pointer_y = ie.y;
+            event.type = Event::MouseButtonReleased;
+            event.mouseButton.button = Mouse::Left;
+            event.mouseButton.x = ie.x; event.mouseButton.y = ie.y;
+            break;
+        case pd::EvKind::PointerMove:
+            g_pointer_x = ie.x; g_pointer_y = ie.y;
+            event.type = Event::MouseMoved;
+            event.mouseMove.x = ie.x; event.mouseMove.y = ie.y;
+            break;
+        case pd::EvKind::KeyDown:
+        case pd::EvKind::KeyUp:
+            event.type = (ie.kind == pd::EvKind::KeyDown) ? Event::KeyPressed
+                                                          : Event::KeyReleased;
+            event.key.code = MapKey(ie.keycode);
+            event.key.alt = event.key.control = event.key.shift = event.key.system = false;
+            break;
+    }
+    return true;
+}
+void Window::display() { pd::PumpEvents(); pd::SwapBuffers(); }
 void Window::setVerticalSyncEnabled(bool) {}
 void Window::setFramerateLimit(unsigned int) {}
 void Window::setMouseCursorVisible(bool) {}
+void Window::setKeyRepeatEnabled(bool) {}
 void Window::setTitle(const String&) {}
 void Window::setActive(bool) {}
-Vector2u Window::getSize() const { return m_size; }
+Vector2u Window::getSize() const {
+    unsigned w = 0, h = 0;
+    pd::GetSurfaceSize(w, h);
+    return (w && h) ? Vector2u(w, h) : m_size;
+}
 
 // ---- Image (TODO A1d: stb_image) ----
 Image::Image() : m_w(0), m_h(0) {}
@@ -143,17 +216,25 @@ FloatRect Text::getGlobalBounds() const {
 }
 void Text::draw(RenderTarget&, const RenderStates&) const {}
 
-// ---- RenderTarget / RenderWindow / RenderTexture (TODO A1c/A1d) ----
+// ---- RenderTarget / RenderWindow / RenderTexture (A1c; 2D draw = A1d) ----
 void RenderTarget::draw(const Drawable& drawable, const RenderStates& states) { drawable.draw(*this, states); }
 void RenderTarget::draw(const Vertex*, std::size_t, PrimitiveType, const RenderStates&) {}
-void RenderTarget::clear(const Color&) {}
+void RenderTarget::clear(const Color& c) {
+    glClearColor(c.r / 255.f, c.g / 255.f, c.b / 255.f, c.a / 255.f);
+    glDepthMask(GL_TRUE);   // depth writes may be off from the last render mode
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
 void RenderTarget::pushGLStates() {}
 void RenderTarget::popGLStates() {}
 
 RenderWindow::RenderWindow() {}
 RenderWindow::~RenderWindow() {}
-Vector2u RenderWindow::getSize() const { return m_size; }
-void RenderWindow::display() {}
+Vector2u RenderWindow::getSize() const {
+    unsigned w = 0, h = 0;
+    pd::GetSurfaceSize(w, h);
+    return (w && h) ? Vector2u(w, h) : m_size;
+}
+void RenderWindow::display() { pd::PumpEvents(); pd::SwapBuffers(); }
 bool RenderWindow::setActive(bool) { return true; }
 
 RenderTexture::RenderTexture() : m_fbo(0), m_w(0), m_h(0) {}

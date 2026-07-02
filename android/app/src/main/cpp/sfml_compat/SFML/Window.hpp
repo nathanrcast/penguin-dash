@@ -112,6 +112,7 @@ public:
     void setVerticalSyncEnabled(bool enabled);
     void setFramerateLimit(unsigned int limit);
     void setMouseCursorVisible(bool visible);
+    void setKeyRepeatEnabled(bool enabled);
     void setTitle(const String& title);
     void setActive(bool active = true);
     Vector2u getSize() const;

@@ -27,6 +27,7 @@ set(CMAKE_SHARED_LINKER_FLAGS
 
 add_library(penguindash SHARED
     native_main.cpp
+    android_entry.cpp
     sfml_compat.cpp
     ${ENGINE_SRC})
 
