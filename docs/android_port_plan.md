@@ -93,10 +93,19 @@ Toolchain on `.13`: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0
     **Verified:** boots → player-select screen (logo, snow frame, character previews, input boxes, fonts)
     → tapping Enter advances to the main menu (Enter an event / Practice / Configuration / Highscore /
     Help / Credits / Quit); textures, fonts, and touch all correct. Desktop `etr` still builds+links.
-  - **NEXT: A2 (touch + tilt gameplay controls) and on-device 3D.** Menus work; the 3D course path is
-    GLES2-native (M0–M6) but hasn't been exercised on device — running a Practice course is the next
-    checkpoint, then A2 wires `ASensor` accelerometer steering + on-screen brake/jump/paddle buttons
-    (deadzone/sensitivity for ages 6–10), then A3 audio (Oboe). Screenshot path (A4-gated) still stubbed.
+  - **On-device 3D DONE + verified 2026-07-01 on the Tab A9+:** a full Practice/event race renders and
+    runs — lit snow terrain (quadtree), skybox, tree billboards, course flags, herring pickups, distance
+    fog, the Tux character (body + shadow through the 3D shader), and the 2D-over-3D HUD (timer, herring
+    count, speedometer gauge); the race is live (timer/speed/HUD update, camera follows, no crash). The
+    entire M0–M6 GLES2 renderer works through the A1c/A1d/A4 stack. **One crash fixed to get here:** the
+    pre-race `CIntro::Enter`→`CMusic::PlayTheme` dereferenced an out-of-bounds `Music*` because the audio
+    stubs failed every `openFromFile`, leaving `musics[]` empty while the theme table indexed into it —
+    the stubs now report load success as a silent no-op so the engine's music/sound bookkeeping stays
+    valid (real audio is still A3). **Effectively playable now, pending controls + audio.**
+  - **NEXT: A2 (touch + tilt gameplay controls), then A3 (Oboe audio).** The race runs but there's no
+    gameplay input yet — A2 wires `ASensor` accelerometer steering + on-screen brake/jump/paddle buttons
+    (deadzone/sensitivity tuned for ages 6–10). Then A3 for music/SFX (Oboe + a vorbis decoder). The
+    debug screenshot path stays stubbed (A4-gated) and can be finished opportunistically.
 - **A2 – Input (touch + tilt):** `AInputEvent` touch → menu/UI + on-screen buttons (brake/jump/paddle);
   `ASensor` accelerometer → steering, with deadzone/sensitivity tuned for ages 6–10.
 - **A3 – Audio:** replace `sf::Music`/`sf::Sound` with Oboe (music + SFX).

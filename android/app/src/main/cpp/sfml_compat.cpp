@@ -542,10 +542,14 @@ void RenderTexture::setSmooth(bool) {}
 Vector2u RenderTexture::getSize() const { return Vector2u(m_w, m_h); }
 bool RenderTexture::setActive(bool) { return true; }
 
-// ---- Audio (TODO A3: Oboe + stb_vorbis) ----
+// ---- Audio (silent no-op until A3: Oboe + stb_vorbis) ----
+// load/open report success so the engine's music/sound bookkeeping stays valid
+// (CMusic indexes musics[] into its theme table — a failed load left that empty,
+// so theme setup dereferenced an out-of-bounds Music* and crashed). Playback is
+// a no-op: the game runs silently until real audio lands.
 SoundBuffer::SoundBuffer() : m_impl(nullptr) {}
 SoundBuffer::~SoundBuffer() {}
-bool SoundBuffer::loadFromFile(const std::string&) { return false; }
+bool SoundBuffer::loadFromFile(const std::string&) { return true; }
 
 Sound::Sound() : m_buffer(nullptr) {}
 Sound::~Sound() {}
@@ -555,7 +559,7 @@ void Sound::stop() { m_status = Stopped; }
 
 Music::Music() : m_impl(nullptr) {}
 Music::~Music() {}
-bool Music::openFromFile(const std::string&) { return false; }
+bool Music::openFromFile(const std::string&) { return true; }
 void Music::play() { m_status = Playing; }
 void Music::stop() { m_status = Stopped; }
 
