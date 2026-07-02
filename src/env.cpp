@@ -38,12 +38,7 @@ static const float def_pos[]    = {1.f,   2.f,   2.f,   0.f};
 static const float def_fogcol[] = {0.9f,  0.9f,  1.f,   0.f};
 static const sf::Color def_partcol(204, 204, 230, 0);
 
-void TLight::Enable(GLenum num) const {
-	glLightfv(num, GL_POSITION, position);
-	glLightfv(num, GL_AMBIENT, ambient);
-	glLightfv(num, GL_DIFFUSE, diffuse);
-	glLightfv(num, GL_SPECULAR, specular);
-	glEnable(num);
+void TLight::Enable(int num) const {
 	RenderSetLight(num, position, ambient, diffuse, specular);
 }
 
@@ -80,36 +75,26 @@ void CEnvironment::ResetSkybox() {
 }
 
 void CEnvironment::SetupLight() {
-	lights[0].Enable(GL_LIGHT0);
+	lights[0].Enable(0);
 	if (lights[1].is_on)
-		lights[1].Enable(GL_LIGHT1);
+		lights[1].Enable(1);
 	if (lights[2].is_on)
-		lights[2].Enable(GL_LIGHT2);
+		lights[2].Enable(2);
 	if (lights[3].is_on)
-		lights[3].Enable(GL_LIGHT3);
+		lights[3].Enable(3);
 }
 
 void CEnvironment::SetupFog() {
-	glEnable(GL_FOG);
-	glFogi(GL_FOG_MODE, fog.mode);
-	glFogf(GL_FOG_START, fog.start);
-	glFogf(GL_FOG_END, fog.end);
-	glFogfv(GL_FOG_COLOR, fog.color);
+	// GLES2: fog is linear in the shader (fog.mode is always GL_LINEAR); the
+	// fog-quality hint has no shader analogue.
 	RenderSetFog(true, fog.start, fog.end, fog.color);
-
-	if (param.perf_level > 1) {
-		glHint(GL_FOG_HINT, GL_NICEST);
-	} else {
-		glHint(GL_FOG_HINT, GL_FASTEST);
-	}
 }
 
 void CEnvironment::ResetLight() {
 	lights[0] = default_light;
 	for (int i=1; i<4; i++) lights[i].is_on = false;
-	glDisable(GL_LIGHT1);
-	glDisable(GL_LIGHT2);
-	glDisable(GL_LIGHT3);
+	// GLES2 shader path uses a single light (GL_LIGHT0); the extra lights are
+	// simply left disabled in the tracked state.
 }
 
 void CEnvironment::ResetFog() {
@@ -342,7 +327,6 @@ void CEnvironment::DrawFog() const {
 	// --------------- draw the fog plane -----------------------------
 
 	ScopedRenderMode rm(FOG_PLANE);
-	glEnable(GL_FOG);
 	RenderSetFogEnabled(true);
 
 	// only the alpha channel is used; RGB comes from the fog colour via the

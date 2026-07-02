@@ -362,7 +362,6 @@ void DrawPercentBar(float fact, float x, float y) {
 void DrawCoursePosition(const CControl *ctrl) {
 	double fact = ctrl->cpos.z / Course.GetPlayDimensions().y;
 	if (fact > 1.0) fact = 1.0;
-	glEnable(GL_TEXTURE_2D);
 	DrawPercentBar(-fact, Winsys.resolution.width - 48, 280-128);
 	Tex.Draw(T_MASK_OUTLINE, Winsys.resolution.width - 48, Winsys.resolution.height - 280, 1.0);
 }

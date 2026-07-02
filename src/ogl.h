@@ -82,7 +82,7 @@ struct TRenderState {
 };
 
 const TRenderState& RenderStateSnapshot();
-void RenderSetLight(GLenum num, const float* position, const float* ambient,
+void RenderSetLight(int num, const float* position, const float* ambient,
                     const float* diffuse, const float* specular);
 void RenderSetFog(bool enabled, float start, float end, const float* color);
 void RenderSetFogEnabled(bool enabled);
@@ -105,15 +105,6 @@ void ClearRenderContext();
 void ClearRenderContext(const sf::Color& col);
 void Setup2dScene();
 void Reshape(int w, int h);
-
-void glColor(const sf::Color& col);
-void glColor(const sf::Color& col, uint8_t alpha);
-
-void glTranslate(const TVector3d& vec);
-
-void glNormal3(const TVector3d& vec);
-void glVertex3(const TVector3d& vec);
-void glTexCoord2(const TVector2d& vec);
 
 void glLoadMatrix(const TMatrix<4, 4>& mat);
 void glMultMatrix(const TMatrix<4, 4>& mat);

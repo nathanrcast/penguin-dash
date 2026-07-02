@@ -31,11 +31,9 @@ static const struct {
 	GLenum value;
 	GLenum type;
 } gl_values[] = {
-	{ "maximum lights", GL_MAX_LIGHTS, GL_INT },
-	{ "modelview stack depth", GL_MAX_MODELVIEW_STACK_DEPTH, GL_INT },
-	{ "projection stack depth", GL_MAX_PROJECTION_STACK_DEPTH, GL_INT },
+	// GLES2 has no fixed-function lights, matrix stacks, or a queryable
+	// double-buffer flag (EGL owns buffering), so those are not listed.
 	{ "max texture size", GL_MAX_TEXTURE_SIZE, GL_INT },
-	{ "double buffering", GL_DOUBLEBUFFER, GL_UNSIGNED_BYTE },
 	{ "red bits", GL_RED_BITS, GL_INT },
 	{ "green bits", GL_GREEN_BITS, GL_INT },
 	{ "blue bits", GL_BLUE_BITS, GL_INT },
@@ -200,13 +198,8 @@ void set_material_diffuse(const sf::Color& diffuse_colour) {
 		diffuse_colour.b * scale,
 		diffuse_colour.a * scale
 	};
-	// We provide material parameters as floats instead of ints because some older
-	// Intel iGPU drivers do not render objects with int parameters properly.
-	glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, mat_amb_diff);
 	copy4(renderState.matAmbient, mat_amb_diff);
 	copy4(renderState.matDiffuse, mat_amb_diff);
-
-	glColor(diffuse_colour);
 }
 
 void set_material(const sf::Color& diffuse_colour, const sf::Color& specular_colour, float specular_exp) {
@@ -219,12 +212,7 @@ void set_material(const sf::Color& diffuse_colour, const sf::Color& specular_col
 		specular_colour.b * scale,
 		specular_colour.a * scale
 	};
-	// We provide material parameters as floats instead of ints because some older
-	// Intel iGPU drivers do not render objects with int parameters properly.
-	glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, mat_specular);
 	copy4(renderState.matSpecular, mat_specular);
-
-	glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, specular_exp);
 	renderState.shininess = specular_exp;
 }
 
@@ -262,9 +250,9 @@ const TRenderState& RenderStateSnapshot() {
 	return renderState;
 }
 
-void RenderSetLight(GLenum num, const float* position, const float* ambient,
+void RenderSetLight(int num, const float* position, const float* ambient,
                     const float* diffuse, const float* specular) {
-	if (num != GL_LIGHT0)
+	if (num != 0)
 		return;
 	transform_light_position(position, renderState.lightPosition);
 	copy4(renderState.lightAmbient, ambient);
@@ -307,38 +295,27 @@ void set_gl_options(TRenderMode mode) {
 			Winsys.beginSFML();
 			break;
 
+		// GLES2: lighting / texturing / texgen / color-material live in the
+		// tracked renderState (read by the shader in glshader.cpp); only the
+		// still-valid GLES2 fixed state (depth / cull / blend / stencil) is set
+		// on the GL context here.
 		case GAUGE_BARS:
 			renderState.texture2d = true;
 			renderState.texGen = true;
-			glEnable(GL_TEXTURE_2D);
 			glDisable(GL_DEPTH_TEST);
 			glDisable(GL_CULL_FACE);
-			glDisable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glEnable(GL_TEXTURE_GEN_S);
-			glEnable(GL_TEXTURE_GEN_T);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_TRUE);
 			glDepthFunc(GL_LESS);
-
-			glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
-			glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
 			break;
 
 		case TEXFONT:
 			renderState.texture2d = true;
-			glEnable(GL_TEXTURE_2D);
 			glDisable(GL_DEPTH_TEST);
 			glDisable(GL_CULL_FACE);
-			glDisable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_TRUE);
 			glDepthFunc(GL_LESS);
 			break;
@@ -348,21 +325,12 @@ void set_gl_options(TRenderMode mode) {
 			renderState.lighting = true;
 			renderState.colorMaterial = true;
 			renderState.texGen = true;
-			glEnable(GL_TEXTURE_2D);
 			glEnable(GL_DEPTH_TEST);
 			glEnable(GL_CULL_FACE);
-			glEnable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glEnable(GL_TEXTURE_GEN_S);
-			glEnable(GL_TEXTURE_GEN_T);
-			glEnable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_TRUE);
 			glDepthFunc(GL_LEQUAL);
-
-			glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
-			glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR);
 			break;
 
 		case TREES:
@@ -370,16 +338,10 @@ void set_gl_options(TRenderMode mode) {
 			renderState.lighting = true;
 			renderState.alphaTest = true;
 			renderState.alphaRef = 0.5f;
-			glEnable(GL_TEXTURE_2D);
 			glEnable(GL_DEPTH_TEST);
 			glDisable(GL_CULL_FACE);
-			glEnable(GL_LIGHTING);
-			glEnable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_TRUE);
 			glDepthFunc(GL_LESS);
 			break;
@@ -388,74 +350,46 @@ void set_gl_options(TRenderMode mode) {
 			renderState.texture2d = true;
 			renderState.alphaTest = true;
 			renderState.alphaRef = 0.5f;
-			glEnable(GL_TEXTURE_2D);
 			glEnable(GL_DEPTH_TEST);
 			glDisable(GL_CULL_FACE);
-			glDisable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_TRUE);
 			glDepthFunc(GL_LESS);
 			break;
 
 		case SKY:
 			renderState.texture2d = true;
-			glEnable(GL_TEXTURE_2D);
 			glDisable(GL_DEPTH_TEST);
 			glDisable(GL_CULL_FACE);
-			glDisable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_FALSE);
 			glDepthFunc(GL_LESS);
 			break;
 
 		case FOG_PLANE:
-			glDisable(GL_TEXTURE_2D);
 			glEnable(GL_DEPTH_TEST);
 			glDisable(GL_CULL_FACE);
-			glDisable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_TRUE);
 			glDepthFunc(GL_LESS);
 			break;
 
 		case TUX:
 			renderState.lighting = true;
-			glDisable(GL_TEXTURE_2D);
 			glEnable(GL_DEPTH_TEST);
 			glEnable(GL_CULL_FACE);
-			glEnable(GL_LIGHTING);
-			glEnable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthMask(GL_TRUE);
 			glDepthFunc(GL_LESS);
 			break;
 
 		case TUX_SHADOW:
-			glDisable(GL_TEXTURE_2D);
 			glEnable(GL_DEPTH_TEST);
-			glDisable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
-			glDisable(GL_COLOR_MATERIAL);
 			glDepthFunc(GL_LESS);
 #ifdef USE_STENCIL_BUFFER
 			glDisable(GL_CULL_FACE);
@@ -475,16 +409,10 @@ void set_gl_options(TRenderMode mode) {
 			renderState.texture2d = true;
 			renderState.lighting = true;
 			renderState.colorMaterial = true;
-			glEnable(GL_TEXTURE_2D);
 			glEnable(GL_DEPTH_TEST);
 			glDisable(GL_CULL_FACE);
-			glEnable(GL_LIGHTING);
-			glDisable(GL_NORMALIZE);
 			glEnable(GL_BLEND);
 			glDisable(GL_STENCIL_TEST);
-			glEnable(GL_COLOR_MATERIAL);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
 			glDepthMask(GL_FALSE);
 			glDepthFunc(GL_LEQUAL);
 			break;
@@ -508,30 +436,6 @@ void PopRenderMode() {
 		set_gl_options(modestack.top());
 }
 
-
-void glColor(const sf::Color& col) {
-	glColor4ub(col.r, col.g, col.b, col.a);
-}
-
-void glColor(const sf::Color& col, uint8_t alpha) {
-	glColor4ub(col.r, col.g, col.b, alpha);
-}
-
-void glTranslate(const TVector3d& vec) {
-	glTranslated(vec.x, vec.y, vec.z);
-}
-
-void glNormal3(const TVector3d& vec) {
-	glNormal3d(vec.x, vec.y, vec.z);
-}
-
-void glVertex3(const TVector3d& vec) {
-	glVertex3d(vec.x, vec.y, vec.z);
-}
-
-void glTexCoord2(const TVector2d& vec) {
-	glTexCoord2d(vec.x, vec.y);
-}
 
 void glLoadMatrix(const TMatrix<4, 4>& mat) {
 	renderState.modelview = mat;

@@ -443,7 +443,6 @@ void CCharShape::DrawNodes(const TCharNode *node, const TMatrix<4, 4>& parentMod
 
 void CCharShape::Draw() {
 	ScopedRenderMode rm(TUX);
-	glEnable(GL_NORMALIZE);
 
 	const TCharNode *node = GetNode(0);
 	if (node == nullptr) return;
@@ -454,7 +453,6 @@ void CCharShape::Draw() {
 	DrawNodes(node, id);
 	Shader3D_End();
 
-	glDisable(GL_NORMALIZE);
 	if (param.perf_level > 2 && g_game.argument == 0) DrawShadow();
 	highlighted = false;
 }

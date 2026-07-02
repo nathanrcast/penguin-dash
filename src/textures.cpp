@@ -63,7 +63,6 @@ void TTexture::Bind() {
 }
 
 void TTexture::Draw() {
-	glEnable(GL_TEXTURE_2D);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	Bind();
 
@@ -83,7 +82,6 @@ void TTexture::Draw() {
 void TTexture::Draw(int x, int y, float size) {
 	GLfloat width, height, top, bott, left, right;
 
-	glEnable(GL_TEXTURE_2D);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	Bind();
 
@@ -112,7 +110,6 @@ void TTexture::Draw(int x, int y, float size) {
 void TTexture::Draw(int x, int y, float width, float height) {
 	GLfloat top, bott, left, right;
 
-	glEnable(GL_TEXTURE_2D);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	Bind();
 
@@ -268,7 +265,6 @@ void CTexture::DrawNumStr(const std::string& s, int x, int y, float size, const 
 		return;
 	}
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glEnable(GL_TEXTURE_2D);
 	int qw = (int)(22 * size);
 	int qh = (int)(32 * size);
 

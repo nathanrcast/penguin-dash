@@ -42,7 +42,8 @@ struct TLight {
 	float position[4];
 	bool is_on;
 
-	void Enable(GLenum num) const;
+	// num is a light index (0 = primary); only light 0 feeds the GLES2 shader.
+	void Enable(int num) const;
 };
 
 struct TEnvironment {

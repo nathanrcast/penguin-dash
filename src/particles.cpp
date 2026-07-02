@@ -365,8 +365,6 @@ void draw_particles(const CControl *ctrl) {
 
 	ScopedRenderMode rm(PARTICLES);
 	Tex.BindTex(SNOW_PART);
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-	glColor4f(1.f, 1.f, 1.f, 0.8f);
 
 	TMatrix<4, 4> id;
 	id.SetIdentity();
@@ -507,10 +505,8 @@ void TFlakeArea::Draw(const CControl *ctrl) const {
 	float dir_angle(std::atan(ctrl->viewdir.x / ctrl->viewdir.z) * 180 / M_PI);
 
 	ScopedRenderMode rm(PARTICLES);
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	Tex.BindTex(SNOW_PART);
 	const sf::Color& particle_colour = Env.ParticleColor();
-	glColor(particle_colour);
 
 	TMatrix<4, 4> id;
 	id.SetIdentity();
@@ -833,11 +829,8 @@ void CCurtain::Draw() {
 	if (g_game.snow_id < 1) return;
 
 	ScopedRenderMode rm(PARTICLES);
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	const sf::Color& particle_colour = Env.ParticleColor();
-	glColor(particle_colour, 255);
 
-	// glEnable (GL_NORMALIZE);
 	TMatrix<4, 4> id;
 	id.SetIdentity();
 	Shader3D_Begin3D();

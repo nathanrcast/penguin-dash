@@ -759,7 +759,6 @@ void quadsquare::Render(const quadcornerdata& cd, GLubyte *vnc_array) {
 		RenderAux(cd, SomeClip, -1);
 
 		if (VertexArrayCounter != 0) {
-			glDisable(GL_FOG);
 			RenderSetFogEnabled(false);
 			for (GLuint i=0; i<VertexArrayCounter; i++) {
 				colorval(VertexArrayIndices[i], 0) = 0;
@@ -769,8 +768,6 @@ void quadsquare::Render(const quadcornerdata& cd, GLubyte *vnc_array) {
 			}
 			Course.TerrList[0].texture->Bind();
 			DrawTris();
-			//if (fog_on)
-			glEnable(GL_FOG);
 			RenderSetFogEnabled(true);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 			for (GLuint i=0; i<VertexArrayCounter; i++) {

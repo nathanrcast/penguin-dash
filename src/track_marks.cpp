@@ -135,7 +135,6 @@ void DrawTrackmarks() {
 	textures[TRACK_MARK] = Tex.GetTexture(trackid2);
 	textures[TRACK_TAIL] = Tex.GetTexture(trackid3);
 
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
 	TMatrix<4, 4> id;
 	id.SetIdentity();

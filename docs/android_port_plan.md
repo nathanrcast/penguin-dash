@@ -44,14 +44,26 @@ Toolchain on `.13`: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0
     `__ANDROID__` (GLES2 headers, no GLX); `ogl.{h,cpp}` gated for the desktop-only compiled-vertex-array
     ext; `spx.h` given an explicit `<ios>`. CMake compiles the full source list minus `main.cpp` (entry =
     `android_main`). All shim/portability errors cleared.
-  - **A1 remaining (the render conversion):** ~59 fixed-function **state-setup** calls
-    (`glLightfv`/`glFogf`/`glTexEnv`/`glTexGen`, the enums `GL_LIGHT0-3`/`GL_FOG*`/`GL_TEXTURE_ENV`/
-    `GL_OBJECT_PLANE`) still present in `env.cpp`, `course_render.cpp`, `hud.cpp`, `particles.cpp`,
-    `track_marks.cpp`, `ogl.cpp` (+ editor `ogl_test.cpp`/`tools.cpp`, low-priority). The M0–M6 rewrite
-    made the **draw** path GLES2-native but left **state configuration** on fixed-function; M6's tracked-
-    state setters (`RenderSetLight`/`RenderSetFog`/`RenderSetTexGenPlanes` in `ogl.cpp`) are the drop-in
-    targets. Convert these → engine links. Then A1c (wire `android_main`→engine init + `winsys`/input on
-    EGL) and A1d (real `Texture`/`Font`/`Text`/`Sprite` draw on stb + Shader2D) → first menu frame.
+  - **A1 render conversion DONE 2026-07-01:** all remaining fixed-function **state-setup** calls
+    removed in favour of M6's tracked-state setters (`RenderSetLight`/`RenderSetFog`/`RenderSetFogEnabled`/
+    `RenderSetTexGenPlanes`) — the shader path (`glshader.cpp` reading `RenderStateSnapshot()`) already
+    drove rendering on both platforms, so the fixed-function calls were pure vestige. Removed: `glLightfv`/
+    `glFog*`/`glTexGen*`/`glTexEnvf`/`glMaterial*` functions; `glEnable/glDisable` of `GL_LIGHTING`/
+    `GL_TEXTURE_2D`/`GL_NORMALIZE`/`GL_COLOR_MATERIAL`/`GL_TEXTURE_GEN_*`/`GL_FOG`; the `glColor`/
+    `glColor4*` current-color path (color travels as a vertex attribute); dead matrix/vertex wrappers
+    (`glTranslate`/`glNormal3`/`glVertex3`/`glTexCoord2`); and the fixed-function query rows in
+    `PrintGLInfo`'s `gl_values[]` (`GL_MAX_LIGHTS`/`*_STACK_DEPTH`/`GL_DOUBLEBUFFER`). The light API moved
+    from `GL_LIGHT0-3` GLenum tokens (undefined in GLES2) to plain int indices (`TLight::Enable(int)`,
+    `RenderSetLight(int)`). Touched `env`, `course_render`, `hud`, `particles`, `track_marks`, `quadtree`,
+    `tux`, `textures`, `ogl`, `ogl_test`, `tools`. **Verified:** desktop `etr` still builds+links (exit 0);
+    every render TU now compiles under the NDK. Kept the still-valid GLES2 fixed state
+    (`GL_DEPTH_TEST`/`GL_CULL_FACE`/`GL_BLEND`/`GL_STENCIL_TEST`, `glDepthMask/Func`, stencil ops).
+  - **A1c (NEXT — the active NDK blocker): winsys/input on EGL.** The full engine does not link yet: only
+    `winsys.cpp` fails to compile — the SFML platform layer still hits the compat shim's gaps
+    (`RenderWindow::setKeyRepeatEnabled`, `sf::Texture::create`/`copyToImage`, `sf::Image::saveToFile` —
+    the window setup + screenshot path). Wire `android_main`→engine init and replace the `winsys` window/
+    input/screenshot surface with the EGL shim (extend `sfml_compat` or gate the desktop-only screenshot),
+    then A1d (real `Texture`/`Font`/`Text`/`Sprite` draw on stb + Shader2D) → first menu frame.
 - **A2 – Input (touch + tilt):** `AInputEvent` touch → menu/UI + on-screen buttons (brake/jump/paddle);
   `ASensor` accelerometer → steering, with deadzone/sensitivity tuned for ages 6–10.
 - **A3 – Audio:** replace `sf::Music`/`sf::Sound` with Oboe (music + SFX).

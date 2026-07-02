@@ -36,15 +36,12 @@ static const bool clip_course = true;
 void setup_course_tex_gen() {
 	static const GLfloat xplane[4] = {1.f / TEX_SCALE, 0.f, 0.f, 0.f };
 	static const GLfloat zplane[4] = {0.f, 0.f, 1.f / TEX_SCALE, 0.f };
-	glTexGenfv(GL_S, GL_OBJECT_PLANE, xplane);
-	glTexGenfv(GL_T, GL_OBJECT_PLANE, zplane);
 	RenderSetTexGenPlanes(xplane, zplane);
 }
 
 void RenderCourse() {
 	ScopedRenderMode rm(COURSE);
 	setup_course_tex_gen();
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	set_material(colWhite, colBlack, 1.0);
 	const CControl *ctrl = g_game.player->ctrl;
 	UpdateQuadtree(ctrl->viewpos, param.course_detail_level);
@@ -59,7 +56,6 @@ void DrawTrees() {
 	double fwd_clip_limit = param.forward_clip_distance;
 	double bwd_clip_limit = param.backward_clip_distance;
 
-	glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	set_material(colWhite, colBlack, 1.0);
 
 	// GLES2: billboards through the 3D shader. Snapshot env + base proj/view

@@ -139,7 +139,6 @@ static const TLight toollight = {
 static int tool_mode = 0;
 
 void DrawQuad(float x, float y, float w, float h, float scrheight, const sf::Color& col, int frame) {
-	glDisable(GL_TEXTURE_2D);
 	const GLfloat vtx[] = {
 		x - frame, scrheight - y - h - frame,
 		x + w + frame, scrheight - y - h - frame,
@@ -149,7 +148,6 @@ void DrawQuad(float x, float y, float w, float h, float scrheight, const sf::Col
 	Shader2D_Begin(Winsys.resolution.width, Winsys.resolution.height);
 	Shader2D_DrawArrays(GL_TRIANGLE_FAN, vtx, nullptr, 4, false, col);
 	Shader2D_End();
-	glEnable(GL_TEXTURE_2D);
 }
 
 void DrawChanged() {
@@ -159,8 +157,7 @@ void DrawChanged() {
 }
 
 void SetToolLight() {
-	toollight.Enable(GL_LIGHT0);
-	glEnable(GL_LIGHTING);
+	toollight.Enable(0);
 }
 
 void QuitTool() {

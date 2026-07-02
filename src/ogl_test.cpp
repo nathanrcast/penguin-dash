@@ -38,8 +38,7 @@ static const TLight light = {
 
 
 void SetTestLight() {
-	light.Enable(GL_LIGHT0);
-	glEnable(GL_LIGHTING);
+	light.Enable(0);
 }
 
 
