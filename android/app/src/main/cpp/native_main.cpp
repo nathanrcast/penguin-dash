@@ -10,9 +10,13 @@
 #include <android/native_window.h>
 #include <android/input.h>
 #include <android/keycodes.h>
+#include <android/asset_manager.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
+#include <sys/stat.h>
+#include <cstdio>
 #include <deque>
+#include <string>
 
 #include "native_bridge.h"
 
@@ -37,6 +41,79 @@ struct Engine {
 };
 
 Engine g_engine;
+
+// Filesystem roots (A4). Resolved once in extract_assets().
+std::string g_dataDir;     // <internalDataPath>/etr — the ETR data root
+std::string g_configDir;   // <internalDataPath>     — writable (options/players)
+
+// mkdir -p for the directory portion of a file path.
+void make_parent_dirs(const std::string& path) {
+    for (std::size_t i = 1; i < path.size(); i++)
+        if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0775);
+}
+
+bool read_asset_text(AAssetManager* mgr, const char* name, std::string& out) {
+    AAsset* a = AAssetManager_open(mgr, name, AASSET_MODE_BUFFER);
+    if (!a) return false;
+    off_t len = AAsset_getLength(a);
+    out.resize(static_cast<std::size_t>(len));
+    if (len > 0) AAsset_read(a, &out[0], len);
+    AAsset_close(a);
+    return true;
+}
+
+// Extract packaged assets to internal storage on first run (or after an update),
+// keyed on the packaged assetver.txt vs a stored marker (OneCube pattern). ETR
+// reads all its data via fopen, so a one-time extraction is simpler than hooking
+// AAssetManager into every IO path.
+void extract_assets(android_app* app) {
+    AAssetManager* mgr = app->activity->assetManager;
+    const std::string base = app->activity->internalDataPath ? app->activity->internalDataPath : ".";
+    g_configDir = base;
+    g_dataDir = base + "/etr";
+
+    std::string wantVer, haveVer;
+    read_asset_text(mgr, "assetver.txt", wantVer);
+    if (FILE* f = std::fopen((base + "/assetver").c_str(), "rb")) {
+        char buf[64]; std::size_t n = std::fread(buf, 1, sizeof(buf) - 1, f); buf[n] = 0;
+        haveVer = buf; std::fclose(f);
+    }
+    if (!wantVer.empty() && wantVer == haveVer) {
+        LOGI("assets up to date (ver %s)", wantVer.c_str());
+        return;
+    }
+
+    std::string list;
+    if (!read_asset_text(mgr, "filelist.txt", list)) { LOGW("no filelist.txt asset"); return; }
+    mkdir(g_dataDir.c_str(), 0775);
+
+    int count = 0;
+    std::size_t pos = 0;
+    while (pos < list.size()) {
+        std::size_t nl = list.find('\n', pos);
+        std::string rel = list.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        pos = (nl == std::string::npos) ? list.size() : nl + 1;
+        while (!rel.empty() && (rel.back() == '\r' || rel.back() == '\n' || rel.back() == ' '))
+            rel.pop_back();
+        if (rel.empty() || rel == "filelist.txt" || rel == "assetver.txt") continue;
+
+        AAsset* a = AAssetManager_open(mgr, rel.c_str(), AASSET_MODE_STREAMING);
+        if (!a) { LOGW("asset missing: %s", rel.c_str()); continue; }
+        const std::string dst = g_dataDir + "/" + rel;
+        make_parent_dirs(dst);
+        if (FILE* out = std::fopen(dst.c_str(), "wb")) {
+            char buf[65536]; int r;
+            while ((r = AAsset_read(a, buf, sizeof buf)) > 0) std::fwrite(buf, 1, r, out);
+            std::fclose(out);
+            count++;
+        }
+        AAsset_close(a);
+    }
+    if (FILE* f = std::fopen((base + "/assetver").c_str(), "wb")) {
+        std::fwrite(wantVer.data(), 1, wantVer.size(), f); std::fclose(f);
+    }
+    LOGI("asset extraction complete: %d files -> %s", count, g_dataDir.c_str());
+}
 
 // (Re)create the window surface for the current app->window and make it current.
 // Split from context creation so we can rebuild the surface when the window is
@@ -229,6 +306,9 @@ bool PollInput(InputEvent& out) {
     return true;
 }
 
+const char* DataDir() { return g_dataDir.c_str(); }
+const char* ConfigDir() { return g_configDir.c_str(); }
+
 } // namespace pd
 
 void android_main(android_app* app) {
@@ -237,6 +317,9 @@ void android_main(android_app* app) {
     app->userData = &g_engine;
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
+
+    // Unpack game data to internal storage before the engine boots (A4).
+    extract_assets(app);
 
     // Wait for the first usable surface before booting the engine (it needs a
     // live GLES2 context for shader/texture init).

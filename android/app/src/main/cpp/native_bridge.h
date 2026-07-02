@@ -38,6 +38,12 @@ struct InputEvent {
 };
 bool PollInput(InputEvent& out);
 
+// Filesystem roots resolved at boot (A4). DataDir is where APK assets were
+// extracted (the ETR data root); ConfigDir is the app's writable dir (options,
+// saved players, high scores). Both valid after android_main's extract step.
+const char* DataDir();
+const char* ConfigDir();
+
 } // namespace pd
 
 // Engine entry, implemented in android_entry.cpp: runs the full ETR init + main

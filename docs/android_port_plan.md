@@ -74,12 +74,29 @@ Toolchain on `.13`: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0
     loop survives the asset-less state. **Verified:** boots on the A9+ (EGL 1920×1200, GLES 3.2), runs the loop
     with no crash (process stays alive), clears the full surface to the GUI bg `colBackgr` (102,153,204) each
     frame via the bridged swap; tap + dpad input exercised without crashing.
-  - **A1d + A4 (NEXT, coupled): real 2D draw + APK assets → first menu frame.** The loop runs but draws
-    nothing — `Texture`/`Font`/`Text`/`Sprite`/`Image` are still shim stubs and there are no assets on device
-    (`LoadTextureList` fails, logged). A1d = implement those on `stb_image`/`stb_truetype` + the GLES2 Shader2D
-    path (add stb to `cpp/third_party`); A4 = package `data/` into APK assets, `AAssetManager`-backed IO,
-    extract-on-first-run keyed on versionCode (OneCube pattern). Both are needed before the logo/menu text
-    actually appear — do them together.
+  - **A1d + A4 DONE + device-verified 2026-07-01 on the Tab A9+:** the menu now renders and responds to
+    touch. **A4 (assets):** `app/build.gradle` adds `data/` as an assets srcDir (in place, no copy) + a
+    `genAssetManifest` task emitting `filelist.txt` (466 paths, Makefiles excluded) and `assetver.txt`
+    (versionCode); `native_main.cpp` `extract_assets()` unpacks via `AAssetManager` to
+    `<internalDataPath>/etr` on first run, re-extracting when `assetver` changes (OneCube pattern);
+    `game_config.cpp` gained an `__ANDROID__` branch pointing `data_dir`→extracted root and
+    `config_dir`/`save_dir`→the app's writable dir (no passwd/home on Android); `pd::DataDir/ConfigDir`
+    added to the bridge. **A1d (2D draw):** `sfml_compat.cpp` now implements `Image`/`Texture` on
+    `stb_image` (forced RGBA → GL upload, CLAMP for NPOT safety), `Sprite`/`RectangleShape`/`VertexArray`
+    draw through `Shader2D` (positions Y-flipped for the bottom-left ortho), and `Font`/`Text` on
+    `stb_truetype` (per-pixel-size baked atlas cached on the `FontData`, stored rgb=255/a=coverage so the
+    Shader2D colour multiply gives coloured anti-aliased text); stb headers vendored in `cpp/third_party`.
+    **Two engine bugs this surfaced (both fixed in shared code, desktop-safe):** `glshader.cpp` hard-coded
+    `#version 120` (invalid on GLES2 → shaders never compiled → blank screen) — now `#version 100` +
+    `precision` under `__ANDROID__`; and it loaded GL entry points via `eglGetProcAddress`, which returns
+    NULL for **core** funcs on some drivers — now binds the core `libGLESv2` symbols directly on Android.
+    **Verified:** boots → player-select screen (logo, snow frame, character previews, input boxes, fonts)
+    → tapping Enter advances to the main menu (Enter an event / Practice / Configuration / Highscore /
+    Help / Credits / Quit); textures, fonts, and touch all correct. Desktop `etr` still builds+links.
+  - **NEXT: A2 (touch + tilt gameplay controls) and on-device 3D.** Menus work; the 3D course path is
+    GLES2-native (M0–M6) but hasn't been exercised on device — running a Practice course is the next
+    checkpoint, then A2 wires `ASensor` accelerometer steering + on-screen brake/jump/paddle buttons
+    (deadzone/sensitivity for ages 6–10), then A3 audio (Oboe). Screenshot path (A4-gated) still stubbed.
 - **A2 – Input (touch + tilt):** `AInputEvent` touch → menu/UI + on-screen buttons (brake/jump/paddle);
   `ASensor` accelerometer → steering, with deadzone/sensitivity tuned for ages 6–10.
 - **A3 – Audio:** replace `sf::Music`/`sf::Sound` with Oboe (music + SFX).

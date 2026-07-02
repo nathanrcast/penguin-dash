@@ -32,6 +32,7 @@ add_library(penguindash SHARED
     ${ENGINE_SRC})
 
 target_include_directories(penguindash PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}               # native_bridge.h (used by game_config.cpp for A4 dirs)
     ${CMAKE_CURRENT_SOURCE_DIR}/sfml_compat   # our <SFML/...> shim — must precede any real SFML
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party    # stb_image / stb_truetype (A1d)
     ${ETRSRC}

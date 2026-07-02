@@ -61,6 +61,15 @@ android {
         buildConfig true
     }
 
+    // A4: package the repo's data/ as APK assets (no copy — point at it in place),
+    // plus a generated filelist.txt/assetver.txt the native code reads to extract
+    // on first run. Makefiles from the autotools tree are excluded.
+    sourceSets {
+        main {
+            assets.srcDirs += ['../../data', "${buildDir}/generated/pd_assets"]
+        }
+    }
+
     packaging {
         jniLibs {
             useLegacyPackaging = true
@@ -74,4 +83,36 @@ android {
 }
 
 dependencies {
+}
+
+// Generate the asset manifest (filelist.txt) + version marker (assetver.txt) that
+// the native extractor consumes. filelist.txt lists every packaged data file as a
+// path relative to the assets root; assetver.txt holds the versionCode so the app
+// re-extracts after an update. Runs before assets are merged into the APK.
+def pdAssetGenDir = "${buildDir}/generated/pd_assets"
+def genAssetManifest = tasks.register('genAssetManifest') {
+    def dataDir = file('../../data')
+    def outDir = file(pdAssetGenDir)
+    def ver = (android.defaultConfig.versionCode ?: 1).toString()
+    inputs.dir dataDir
+    inputs.property 'ver', ver
+    outputs.dir outDir
+    doLast {
+        outDir.mkdirs()
+        def lines = []
+        dataDir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+            def name = f.name
+            if (name == 'Makefile' || name.endsWith('.am') || name.endsWith('.in')) return
+            lines << dataDir.toPath().relativize(f.toPath()).toString().replace('\\', '/')
+        }
+        lines.sort()
+        new File(outDir, 'filelist.txt').text = lines.join('\n') + '\n'
+        new File(outDir, 'assetver.txt').text = ver
+    }
+}
+
+tasks.configureEach { t ->
+    if (t.name.startsWith('merge') && t.name.endsWith('Assets')) {
+        t.dependsOn genAssetManifest
+    }
 }

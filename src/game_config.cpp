@@ -44,6 +44,9 @@ Then edit the below functions:
 #include "translation.h"
 #include <sstream>
 #include <sys/stat.h>
+#ifdef __ANDROID__
+#include "native_bridge.h"   // pd::DataDir / pd::ConfigDir (A4)
+#endif
 
 TParam param;
 
@@ -293,6 +296,16 @@ void InitConfig() {
 	param.prog_dir = buff;
 #endif /* 0 */
 
+#ifdef __ANDROID__
+	// Data was extracted to internal storage (A4); config/saves live in the
+	// app's writable dir. No home directory / passwd on Android.
+	param.data_dir = pd::DataDir();
+	param.config_dir = pd::ConfigDir();
+	param.save_dir = param.config_dir;
+	param.configfile = param.config_dir + SEP "options.txt";
+	if (FileExists(param.configfile))
+		config_exist = 1;
+#else
 	struct passwd *pwent = getpwuid(getuid());
 	std::string halfway_dir;
 
@@ -335,6 +348,7 @@ void InitConfig() {
 			config_exist = 2;
 		}
 	}
+#endif /* __ANDROID__ */
 #endif /* WIN32 */
 
 	param.screenshot_dir = param.save_dir + SEP "screenshots";

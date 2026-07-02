@@ -54,10 +54,14 @@ bool load(T& fn, const char* name) {
 	return fn != nullptr;
 }
 
-// GLSL preamble. Desktop GL 2.1 uses #version 120; the Android/GLES2 build will
-// swap this for "#version 100\nprecision highp float;\n". Shader bodies below use
-// the attribute/varying/gl_FragColor syntax common to both.
+// GLSL preamble. Desktop GL 2.1 uses #version 120; GLES2 needs #version 100 plus
+// an explicit float precision (required in fragment shaders). Shader bodies below
+// use the attribute/varying/gl_FragColor syntax common to both.
+#ifdef __ANDROID__
+const char* PREAMBLE = "#version 100\nprecision highp float;\n";
+#else
 const char* PREAMBLE = "#version 120\n";
+#endif
 
 unsigned int compileStage(GLenum type, const char* src, const char* progName) {
 	unsigned int sh = pglCreateShader(type);
@@ -82,6 +86,38 @@ unsigned int compileStage(GLenum type, const char* src, const char* progName) {
 
 bool InitShaderFunctions() {
 	if (g_functionsLoaded) return true;
+#ifdef __ANDROID__
+	// GLES2 core entry points link directly from libGLESv2. eglGetProcAddress is
+	// only guaranteed for extensions and returns NULL for core funcs on some
+	// drivers, so bind the real symbols instead of going through getFunction.
+	pglCreateShader = glCreateShader;
+	pglShaderSource = glShaderSource;
+	pglCompileShader = glCompileShader;
+	pglGetShaderiv = glGetShaderiv;
+	pglGetShaderInfoLog = glGetShaderInfoLog;
+	pglDeleteShader = glDeleteShader;
+	pglCreateProgram = glCreateProgram;
+	pglAttachShader = glAttachShader;
+	pglLinkProgram = glLinkProgram;
+	pglGetProgramiv = glGetProgramiv;
+	pglGetProgramInfoLog = glGetProgramInfoLog;
+	pglUseProgram = glUseProgram;
+	pglGetUniformLocation = glGetUniformLocation;
+	pglGetAttribLocation = glGetAttribLocation;
+	pglUniformMatrix4fv = glUniformMatrix4fv;
+	pglUniform1i = glUniform1i;
+	pglVertexAttrib4f = glVertexAttrib4f;
+	pglVertexAttribPointer = glVertexAttribPointer;
+	pglEnableVertexAttribArray = glEnableVertexAttribArray;
+	pglDisableVertexAttribArray = glDisableVertexAttribArray;
+	pglUniform1f = glUniform1f;
+	pglUniform3fv = glUniform3fv;
+	pglUniform4fv = glUniform4fv;
+	pglUniformMatrix3fv = glUniformMatrix3fv;
+	pglVertexAttrib3f = glVertexAttrib3f;
+	g_functionsLoaded = true;
+	return true;
+#else
 	bool ok = true;
 	ok &= load(pglCreateShader, "glCreateShader");
 	ok &= load(pglShaderSource, "glShaderSource");
@@ -110,6 +146,7 @@ bool InitShaderFunctions() {
 	ok &= load(pglVertexAttrib3f, "glVertexAttrib3f");
 	g_functionsLoaded = ok;
 	return ok;
+#endif
 }
 
 bool TShaderProgram::Compile(const char* vsrc, const char* fsrc, const char* name) {
