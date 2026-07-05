@@ -24,3 +24,5 @@ autom4te.cache/
 *.apk
 *.aab
 *.keystore
+
+CLAUDE.local.md
