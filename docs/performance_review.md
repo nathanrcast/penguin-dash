@@ -13,7 +13,7 @@ frame cost** (low average FPS; under vsync this oscillates 60↔30 and also read
 | P2 | ✅ Batch snowflakes/curtains/particles into one draw per group | constant | S | −500…−3000 draw calls/frame |
 | P3 | ✅ Fix curtain double-draw (upstream bug) | constant | XS | halves curtain fill cost |
 | P4 | ✅ Cheapen per-tree draws (static index buffer, skip normal-matrix, hoist rot) | constant | S | big CPU win on tree-heavy courses |
-| P5 | Terrain: static VBO + terrain-id attrib (or drop multipass on Android) | constant | M–L | removes MB-scale per-frame copies |
+| P5 | ✅ Terrain: static VBO + terrain-id attrib | constant | M–L | removes MB-scale per-frame copies |
 | P6 | Optional render-scale (smaller EGL surface, HW upscale) | constant | S | ~2× fill headroom for old devices |
 | P7 | ✅ Clamp `time_step` max | playability | XS | hitches stop cascading into physics jumps |
 
@@ -23,6 +23,20 @@ tracked natively (SoundPool has no is-playing query) — looping streams by flag
 load-time WAV-header duration — preserving the `getStatus()==Playing` guard that rate-limits
 `tree_hit` retriggering. Music stays on MediaPlayer (state-transition only). Remaining human
 check: confirm by ear that pickups no longer stutter mid-race.
+
+**Stage 3 (P5) SHIPPED 2026-07-10**, device-verified on the A9+ against a parent-build A/B at the
+same start-gate frame (identical: snow grain, shaded banks, ice field with edge blending; full
+race, no crash). Implementation: `Fields[].terrain` is baked into the VNC colour alpha byte and
+the whole array uploaded once per course to a static VBO (`Shader3D_UploadVNC` from
+`FillGlArrays`); the per-pass colour/alpha the CPU used to rewrite each frame is derived in VS_3D
+from `u_terrainMode`/`u_terrain` (1 = main `tid >= t`, 2 = env black base, 3 = env additive
+`tid == t`); `quadsquare::Render` sets the pass and never touches vertex memory. Client-array
+fallback kept for drivers without buffer objects (same shader logic). **Two gotchas hit:**
+(1) `LoadCourse` filled the GL arrays *before* `LoadTerrainMap`, so the baked terrain ids were
+all zero — harmless before (terrain was read live per frame), invisible-terrain regions with the
+VBO; `FillGlArrays` now runs after the terrain map. (2) A/B builds by overwriting files in
+`~/penguin-dash-build` gave sources older mtimes than existing objects — ninja/make kept stale
+`.o`s; `touch src/*` before rebuilding after any content-only file swap.
 
 **Stage 2 (P2+P4) SHIPPED 2026-07-10**, device-verified on the A9+ (snow grade 2 race: batched
 flakes + curtains + brake-spray particles, trees/items/herring, full race → game-over loop, no

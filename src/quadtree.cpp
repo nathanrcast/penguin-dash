@@ -17,11 +17,6 @@
 #define ERROR_MAGNIFICATION_THRESHOLD 20
 #define ERROR_MAGNIFICATION_AMOUNT 3
 #define ENV_MAP_ALPHA 50
-#define colorval(j,ch) \
-	VNCArray[j*STRIDE_GL_ARRAY+STRIDE_GL_ARRAY-4+(ch)]
-
-#define setalphaval(i) colorval(VertexIndices[i], 3) = \
-	( terrain <= VertexTerrains[i] ) ? 255 : 0
 
 #define update_min_max( idx ) \
 	if ( idx > VertexArrayMaxIdx ) { \
@@ -723,12 +718,10 @@ void quadsquare::InitVert(int i, int x, int z) {
 	VertexTerrains[i] = Fields[idx].terrain;
 }
 
-GLubyte *VNCArray;
-
 void quadsquare::DrawTris() {
-	// GLES2: draw through the 3D shader (Shader3D_BeginVNC set up in
-	// RenderQuadtree). Re-sync fog since the env-map pass toggles GL_FOG
-	// between DrawTris calls. Vertex colours are read live from the array.
+	// GLES2: draw through the 3D shader (RenderQuadtree bound the vertex data —
+	// the static course VBO, or the client array as fallback). Re-sync fog since
+	// the env-map pass toggles it between DrawTris calls.
 	Shader3D_SyncFog();
 	Shader3D_DrawElementsU32(VertexArrayCounter, VertexArrayIndices);
 }
@@ -739,57 +732,48 @@ void quadsquare::InitArrayCounters() {
 	VertexArrayMaxIdx = 0;
 }
 
-void quadsquare::Render(const quadcornerdata& cd, GLubyte *vnc_array) {
-	VNCArray = vnc_array;
-
+void quadsquare::Render(const quadcornerdata& cd) {
 	std::size_t numTerrains = Course.TerrList.size();
+	// Main pass, one draw per terrain. The per-pass vertex alpha that used to
+	// be written into the colour array on the CPU each frame is derived in the
+	// vertex shader from the static terrain id (Shader3D_SetTerrainPass, P5).
 	for (std::size_t j=0; j<numTerrains; j++) {
 		if (Course.TerrList[j].texture != nullptr) {
 			InitArrayCounters();
 			RenderAux(cd, SomeClip, (int)j);
 			if (VertexArrayCounter == 0) continue;
 
+			Shader3D_SetTerrainPass(1, (int)j);
 			Course.TerrList[j].texture->Bind();
 			DrawTris();
 		}
 	}
 
 	if (param.perf_level > 1) {
+		// Env pass over the tris spanning three different terrains: a fog-less
+		// black base, then one additive blend pass per terrain.
 		InitArrayCounters();
 		RenderAux(cd, SomeClip, -1);
 
 		if (VertexArrayCounter != 0) {
 			RenderSetFogEnabled(false);
-			for (GLuint i=0; i<VertexArrayCounter; i++) {
-				colorval(VertexArrayIndices[i], 0) = 0;
-				colorval(VertexArrayIndices[i], 1) = 0;
-				colorval(VertexArrayIndices[i], 2) = 0;
-				colorval(VertexArrayIndices[i], 3) = 255;
-			}
+			Shader3D_SetTerrainPass(2, 0);
 			Course.TerrList[0].texture->Bind();
 			DrawTris();
 			RenderSetFogEnabled(true);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-			for (GLuint i=0; i<VertexArrayCounter; i++) {
-				colorval(VertexArrayIndices[i], 0) = 255;
-				colorval(VertexArrayIndices[i], 1) = 255;
-				colorval(VertexArrayIndices[i], 2) = 255;
-			}
 
 			for (std::size_t j=0; j<numTerrains; j++) {
 				if (Course.TerrList[j].texture != nullptr) {
+					Shader3D_SetTerrainPass(3, (int)j);
 					Course.TerrList[j].texture->Bind();
-
-					for (GLuint i=0; i<VertexArrayCounter; i++) {
-						colorval(VertexArrayIndices[i], 3) =
-						    (Fields[VertexArrayIndices[i]].terrain == (char)j) ? 255 : 0;
-					}
 					DrawTris();
 				}
 			}
 		}
 	}
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	Shader3D_SetTerrainPass(0, 0);
 }
 
 clip_result_t quadsquare::ClipSquare(const quadcornerdata& cd) {
@@ -839,13 +823,10 @@ inline void quadsquare::MakeTri(int a, int b, int c, int terrain) {
 	        VertexTerrains[b] == terrain ||
 	        VertexTerrains[c] == terrain)) {
 		VertexArrayIndices[VertexArrayCounter++] = VertexIndices[a];
-		setalphaval(a);
 		update_min_max(VertexIndices[a]);
 		VertexArrayIndices[VertexArrayCounter++] = VertexIndices[b];
-		setalphaval(b);
 		update_min_max(VertexIndices[b]);
 		VertexArrayIndices[VertexArrayCounter++] = VertexIndices[c];
-		setalphaval(c);
 		update_min_max(VertexIndices[c]);
 	}
 }
@@ -872,13 +853,10 @@ inline void quadsquare::MakeNoBlendTri(int a, int b, int c, int terrain) {
 	         VertexTerrains[b] >= terrain &&
 	         VertexTerrains[c] >= terrain)) {
 		VertexArrayIndices[VertexArrayCounter++] = VertexIndices[a];
-		setalphaval(a);
 		update_min_max(VertexIndices[a]);
 		VertexArrayIndices[VertexArrayCounter++] = VertexIndices[b];
-		setalphaval(b);
 		update_min_max(VertexIndices[b]);
 		VertexArrayIndices[VertexArrayCounter++] = VertexIndices[c];
-		setalphaval(c);
 		update_min_max(VertexIndices[c]);
 	}
 }
@@ -1120,15 +1098,18 @@ void UpdateQuadtree(const TVector3d& view_pos, float detail) {
 }
 
 void RenderQuadtree() {
-	GLubyte *vnc_array = Course.GetGLArrays();
+	// GLES2: snapshot the tracked COURSE state (matrices, light, fog, material,
+	// texgen) and bind the interleaved VNC data (pos @0, normal @4f, colour @8f)
+	// — from the static course VBO uploaded at load (P5), or the client array
+	// if buffer objects are unavailable.
+	if (Shader3D_VNCBufferReady())
+		Shader3D_BeginVNCBuffered(STRIDE_GL_ARRAY,
+		                          0, 4 * sizeof(GLfloat), 8 * sizeof(GLfloat));
+	else
+		Shader3D_BeginVNC(Course.GetGLArrays(), STRIDE_GL_ARRAY,
+		                  0, 4 * sizeof(GLfloat), 8 * sizeof(GLfloat));
 
-	// GLES2: snapshot the fixed-function COURSE state (matrices, light, fog,
-	// material, texgen) and point the 3D shader's generic attribs into the
-	// interleaved VNC buffer (pos @0, normal @4f, colour @8f).
-	Shader3D_BeginVNC(vnc_array, STRIDE_GL_ARRAY,
-	                  0, 4 * sizeof(GLfloat), 8 * sizeof(GLfloat));
-
-	root->Render(root_corner_data, vnc_array);
+	root->Render(root_corner_data);
 
 	Shader3D_End();
 }

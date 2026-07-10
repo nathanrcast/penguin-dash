@@ -94,7 +94,7 @@ struct quadsquare {
 	float	RecomputeError(const quadcornerdata& cd);
 	int		CountNodes();
 	void	Update(const quadcornerdata& cd, const TVector3d& ViewerLocation, float Detail);
-	void	Render(const quadcornerdata& cd, GLubyte *vnc_array);
+	void	Render(const quadcornerdata& cd);
 	float	GetHeight(const quadcornerdata& cd, float x, float z);
 	void	SetScale(double x, double z);
 	void	SetFields(CourseFields* fields);

@@ -23,6 +23,7 @@ GNU General Public License for more details.
 #include "course.h"
 #include "textures.h"
 #include "ogl.h"
+#include "glshader.h"
 #include "audio.h"
 #include "track_marks.h"
 #include "spx.h"
@@ -265,9 +266,15 @@ void CCourse::FillGlArrays() {
 			BYTEVAL(0) = 255;
 			BYTEVAL(1) = 255;
 			BYTEVAL(2) = 255;
-			BYTEVAL(3) = 255;
+			// The alpha byte carries the vertex's terrain id; the terrain
+			// passes derive their per-pass colour/alpha from it in the vertex
+			// shader (P5), so this array never changes after load.
+			BYTEVAL(3) = Fields[x + nx*y].terrain;
 		}
 	}
+
+	// Static per course — upload once and render from the GL buffer.
+	Shader3D_UploadVNC(vnc_array, STRIDE_GL_ARRAY * nx * ny);
 }
 
 void CCourse::MakeStandardPolyhedrons() {
@@ -755,12 +762,15 @@ bool CCourse::LoadCourse(TCourse* course) {
 		}
 
 		MakeCourseNormals();
-		FillGlArrays();
 
 		if (!LoadTerrainMap()) {
 			Message("could not load course terrain map");
 			return false;
 		}
+
+		// After the terrain map: FillGlArrays bakes Fields[].terrain into the
+		// vertex alpha (P5) — filling before it would freeze zeros into the VBO.
+		FillGlArrays();
 
 		// ................................................................
 		std::string itemfile = CourseDir + SEP "items.lst";

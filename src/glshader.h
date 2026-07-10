@@ -63,6 +63,16 @@ void Shader2D_End();
 // 4ub) — the terrain layout. Binds the 3D program, uploads
 // all uniforms, and points the generic attribs into the buffer.
 void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, int colOff);
+// P5: the terrain VNC data is static per course (the terrain id lives in the
+// colour alpha byte) — upload it to a GL buffer once at course load and draw
+// from it. UploadVNC returns false if buffer objects are unavailable; callers
+// then fall back to the client-pointer BeginVNC. SetTerrainPass selects the
+// per-pass colour/alpha derivation in the vertex shader (0 = off, 1 = main,
+// 2 = env black base, 3 = env additive; see VS_3D).
+bool Shader3D_UploadVNC(const void* data, unsigned int sizeBytes);
+bool Shader3D_VNCBufferReady();
+void Shader3D_BeginVNCBuffered(int stride, int posOff, int normOff, int colOff);
+void Shader3D_SetTerrainPass(int mode, int terrain);
 // Re-read the dynamic fog enable and re-upload u_useFog (the terrain env-map
 // pass toggles GL_FOG between draws). Cheap; call before each draw.
 void Shader3D_SyncFog();

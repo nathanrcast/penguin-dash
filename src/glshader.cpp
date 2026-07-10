@@ -11,6 +11,7 @@ Licensed under the GNU General Public License; see COPYING.
 #include "common.h" // Message()
 #include "ogl.h"
 #include <SFML/Window/Context.hpp>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,10 @@ PFNGLUNIFORM3FVPROC              pglUniform3fv = nullptr;
 PFNGLUNIFORM4FVPROC              pglUniform4fv = nullptr;
 PFNGLUNIFORMMATRIX3FVPROC        pglUniformMatrix3fv = nullptr;
 PFNGLVERTEXATTRIB3FPROC          pglVertexAttrib3f = nullptr;
+// Terrain VBO (perf review P5)
+PFNGLGENBUFFERSPROC              pglGenBuffers = nullptr;
+PFNGLBINDBUFFERPROC              pglBindBuffer = nullptr;
+PFNGLBUFFERDATAPROC              pglBufferData = nullptr;
 
 bool g_functionsLoaded = false;
 
@@ -115,6 +120,9 @@ bool InitShaderFunctions() {
 	pglUniform4fv = glUniform4fv;
 	pglUniformMatrix3fv = glUniformMatrix3fv;
 	pglVertexAttrib3f = glVertexAttrib3f;
+	pglGenBuffers = glGenBuffers;
+	pglBindBuffer = glBindBuffer;
+	pglBufferData = glBufferData;
 	g_functionsLoaded = true;
 	return true;
 #else
@@ -144,6 +152,11 @@ bool InitShaderFunctions() {
 	ok &= load(pglUniform4fv, "glUniform4fv");
 	ok &= load(pglUniformMatrix3fv, "glUniformMatrix3fv");
 	ok &= load(pglVertexAttrib3f, "glVertexAttrib3f");
+	// Buffer objects are GL 1.5 core; treat as optional (terrain falls back to
+	// client arrays if absent) so the shader path itself is not blocked.
+	load(pglGenBuffers, "glGenBuffers");
+	load(pglBindBuffer, "glBindBuffer");
+	load(pglBufferData, "glBufferData");
 	g_functionsLoaded = ok;
 	return ok;
 #endif
@@ -246,12 +259,27 @@ static const char* VS_3D =
 	"uniform int u_useFog;\n"
 	"uniform float u_fogStart;\n"
 	"uniform float u_fogEnd;\n"
+	// Terrain passes (P5): vertex data is static — a_color.a carries the
+	// vertex's terrain id (0..255) and the per-pass colour/alpha that used to
+	// be rewritten on the CPU each frame is derived here instead.
+	//   0: off (a_color used as-is)   1: main pass, a = (tid >= u_terrain)
+	//   2: env base (black, a=1)      3: env additive, a = (tid == u_terrain)
+	"uniform int u_terrainMode;\n"
+	"uniform float u_terrain;\n"
 	"varying vec4 v_color;\n"
 	"varying vec2 v_texcoord;\n"
 	"varying float v_fog;\n"
 	"void main() {\n"
-	"  vec4 amb = (u_useColorMaterial != 0) ? a_color : u_matAmbient;\n"
-	"  vec4 dif = (u_useColorMaterial != 0) ? a_color : u_matDiffuse;\n"
+	"  vec4 vcol = a_color;\n"
+	"  if (u_terrainMode == 1) {\n"
+	"    vcol = vec4(1.0, 1.0, 1.0, (a_color.a * 255.0 >= u_terrain - 0.5) ? 1.0 : 0.0);\n"
+	"  } else if (u_terrainMode == 2) {\n"
+	"    vcol = vec4(0.0, 0.0, 0.0, 1.0);\n"
+	"  } else if (u_terrainMode == 3) {\n"
+	"    vcol = vec4(1.0, 1.0, 1.0, (abs(a_color.a * 255.0 - u_terrain) < 0.5) ? 1.0 : 0.0);\n"
+	"  }\n"
+	"  vec4 amb = (u_useColorMaterial != 0) ? vcol : u_matAmbient;\n"
+	"  vec4 dif = (u_useColorMaterial != 0) ? vcol : u_matDiffuse;\n"
 	"  vec4 lit;\n"
 	"  if (u_useLighting != 0) {\n"
 	"    vec3 n = normalize(u_normalMatrix * a_normal);\n"
@@ -266,7 +294,7 @@ static const char* VS_3D =
 	"    }\n"
 	"    lit = vec4(rgb, dif.a);\n"
 	"  } else {\n"
-	"    lit = a_color;\n" // lighting off: fixed-function uses the vertex color directly
+	"    lit = vcol;\n" // lighting off: fixed-function uses the vertex color directly
 	"  }\n"
 	"  v_color = clamp(lit, 0.0, 1.0);\n"
 	"  vec4 p4 = vec4(a_position, 1.0);\n"
@@ -385,8 +413,13 @@ struct A3D {
 	GLint useTexGen = -1, texGenS = -1, texGenT = -1;
 	GLint useTexture = -1, tex = -1, alphaTest = -1, alphaRef = -1;
 	GLint useFog = -1, fogColor = -1, fogStart = -1, fogEnd = -1;
+	GLint terrainMode = -1, terrain = -1;
 	bool cached = false;
 } a3d;
+
+// Static terrain vertex buffer (P5): uploaded once per course load.
+unsigned int g_vncBuffer = 0;
+bool g_vncBufferValid = false;
 
 void normalMatrixFromMV(const double mv[16], float out[9]); // defined below
 
@@ -427,6 +460,8 @@ void cacheLocations3D(const TShaderProgram& p) {
 	a3d.fogColor     = p.Uniform("u_fogColor");
 	a3d.fogStart     = p.Uniform("u_fogStart");
 	a3d.fogEnd       = p.Uniform("u_fogEnd");
+	a3d.terrainMode  = p.Uniform("u_terrainMode");
+	a3d.terrain      = p.Uniform("u_terrain");
 	a3d.cached = true;
 }
 
@@ -461,6 +496,10 @@ void snapEnv3D() {
 	pglUniform4fv(a3d.fogColor, 1, state.fogColor);
 	pglUniform1f(a3d.fogStart, state.fogStart);
 	pglUniform1f(a3d.fogEnd, state.fogEnd);
+
+	// The program is shared by every 3D draw path; make sure a terrain pass
+	// left active never leaks into trees/tux/particles.
+	pglUniform1i(a3d.terrainMode, 0);
 }
 
 // Upload mvp + modelview only (normal matrix left as-is — for models that
@@ -531,6 +570,55 @@ void Shader3D_BeginVNC(const void* base, int stride, int posOff, int normOff, in
 	pglVertexAttribPointer(a3d.normal, 3, GL_FLOAT, GL_FALSE, stride, b + normOff);
 	pglEnableVertexAttribArray(a3d.color);
 	pglVertexAttribPointer(a3d.color, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, b + colOff);
+}
+
+// --- P5: static terrain VBO ---
+bool Shader3D_UploadVNC(const void* data, unsigned int sizeBytes) {
+	g_vncBufferValid = false;
+	if (!InitShaderFunctions() || !pglGenBuffers || !pglBindBuffer || !pglBufferData)
+		return false;
+	if (!g_vncBuffer) pglGenBuffers(1, &g_vncBuffer);
+	if (!g_vncBuffer) return false;
+	pglBindBuffer(GL_ARRAY_BUFFER, g_vncBuffer);
+	pglBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeBytes, data, GL_STATIC_DRAW);
+	pglBindBuffer(GL_ARRAY_BUFFER, 0);
+	g_vncBufferValid = true;
+	return true;
+}
+
+bool Shader3D_VNCBufferReady() {
+	return g_vncBufferValid;
+}
+
+void Shader3D_BeginVNCBuffered(int stride, int posOff, int normOff, int colOff) {
+	if (!CoreShaders.ready || !g_vncBufferValid) return;
+	const TShaderProgram& p = CoreShaders.shader3d;
+	p.Use();
+	cacheLocations3D(p);
+
+	const TRenderState& state = RenderStateSnapshot();
+	uploadMatrices3D(state.projection, state.modelview);
+	snapEnv3D();
+
+	// Attrib pointers capture the bound buffer; unbind afterwards so the other
+	// draw paths' client-pointer arrays stay client pointers.
+	pglBindBuffer(GL_ARRAY_BUFFER, g_vncBuffer);
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, stride,
+	                       (const GLvoid*)(uintptr_t)posOff);
+	pglEnableVertexAttribArray(a3d.normal);
+	pglVertexAttribPointer(a3d.normal, 3, GL_FLOAT, GL_FALSE, stride,
+	                       (const GLvoid*)(uintptr_t)normOff);
+	pglEnableVertexAttribArray(a3d.color);
+	pglVertexAttribPointer(a3d.color, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+	                       (const GLvoid*)(uintptr_t)colOff);
+	pglBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void Shader3D_SetTerrainPass(int mode, int terrain) {
+	if (!CoreShaders.ready || a3d.terrainMode < 0) return;
+	pglUniform1i(a3d.terrainMode, mode);
+	pglUniform1f(a3d.terrain, (float)terrain);
 }
 
 void Shader3D_SyncFog() {
