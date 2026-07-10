@@ -10,9 +10,9 @@ frame cost** (low average FPS; under vsync this oscillates 60↔30 and also read
 | # | Fix | Type | Effort | Expected win |
 |---|-----|------|--------|--------------|
 | P1 | ✅ SFX off MediaPlayer → SoundPool; kill per-frame JNI | hitch | S–M | removes pickup/terrain-change spikes |
-| P2 | Batch snowflakes/curtains/particles into one draw per group | constant | S | −500…−3000 draw calls/frame |
+| P2 | ✅ Batch snowflakes/curtains/particles into one draw per group | constant | S | −500…−3000 draw calls/frame |
 | P3 | ✅ Fix curtain double-draw (upstream bug) | constant | XS | halves curtain fill cost |
-| P4 | Cheapen per-tree draws (static index buffer, skip normal-matrix, hoist rot) | constant | S | big CPU win on tree-heavy courses |
+| P4 | ✅ Cheapen per-tree draws (static index buffer, skip normal-matrix, hoist rot) | constant | S | big CPU win on tree-heavy courses |
 | P5 | Terrain: static VBO + terrain-id attrib (or drop multipass on Android) | constant | M–L | removes MB-scale per-frame copies |
 | P6 | Optional render-scale (smaller EGL surface, HW upscale) | constant | S | ~2× fill headroom for old devices |
 | P7 | ✅ Clamp `time_step` max | playability | XS | hitches stop cascading into physics jumps |
@@ -23,6 +23,20 @@ tracked natively (SoundPool has no is-playing query) — looping streams by flag
 load-time WAV-header duration — preserving the `getStatus()==Playing` guard that rate-limits
 `tree_hit` retriggering. Music stays on MediaPlayer (state-transition only). Remaining human
 check: confirm by ear that pickups no longer stutter mid-race.
+
+**Stage 2 (P2+P4) SHIPPED 2026-07-10**, device-verified on the A9+ (snow grade 2 race: batched
+flakes + curtains + brake-spray particles, trees/items/herring, full race → game-over loop, no
+crash). Implementation: flakes/curtain-tiles/race-particles each collect into reused vertex
+vectors and issue one draw per group (`append_billboard_quad`; particles carry per-vertex colour
+via new `Shader3D_SetTexturedColoredArray` since alpha fades per particle; >16384-quad batches
+chunk on the GLushort index limit). `Shader3D_DrawQuadArray`'s index table is now function-static
+(was a heap-allocated rebuild per tree per frame). Trees/items use the new fast model path —
+`Shader3D_SetModelRotation` folds the shared 1° rotation into the base once,
+`Shader3D_SetModelTranslation` recomputes only the modelview's 4th column per object — no
+per-object 4×4 multiply or normal-matrix cofactor inverse; `Shader3D_Begin3D` uploads
+identity-model matrices so particle systems skip SetModel3D entirely. Menu 2D snow
+(per-sprite draws in `draw_ui_snow`) deliberately deferred — menu-only, revisit if menus
+ever profile slow on older devices.
 
 ## Hitch sources (frame spikes)
 

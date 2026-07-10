@@ -215,6 +215,31 @@ void push_ui_snow(const TVector2i& pos) {
 #define MAX_PARTICLE_SPEED 2.0
 
 
+// Texture quadrant per particle/flake type (2x2 sheet in SNOW_PART).
+static const GLfloat tex_coords[4][8] = {
+	{
+		0.0, 0.5,
+		0.5, 0.5,
+		0.5, 0.0,
+		0.0, 0.0
+	}, {
+		0.5, 0.5,
+		1.0, 0.5,
+		1.0, 0.0,
+		0.5, 0.0
+	}, {
+		0.0, 1.0,
+		0.5, 1.0,
+		0.5, 0.5,
+		0.0, 0.5
+	}, {
+		0.5, 1.0,
+		1.0, 1.0,
+		1.0, 0.5,
+		0.5, 0.5
+	}
+};
+
 struct Particle {
 	TVector3d pt;
 	short type;
@@ -225,92 +250,28 @@ struct Particle {
 	double death;
 	double alpha;
 	TVector3d vel;
-
-	void Draw(const CControl* ctrl) const;
-private:
-	void draw_billboard(const CControl *ctrl, double width, double height, bool use_world_y_axis,
-	                    const GLfloat* tex, const sf::Color& color) const;
 };
 
 static std::list<Particle> particles;
 
-void Particle::Draw(const CControl* ctrl) const {
-	static const GLfloat tex_coords[4][8] = {
-		{
-			0.0, 0.5,
-			0.5, 0.5,
-			0.5, 0.0,
-			0.0, 0.0
-		}, {
-			0.5, 0.5,
-			1.0, 0.5,
-			1.0, 0.0,
-			0.5, 0.0
-		}, {
-			0.0, 1.0,
-			0.5, 1.0,
-			0.5, 0.5,
-			0.0, 0.5
-		}, {
-			0.5, 1.0,
-			1.0, 1.0,
-			1.0, 0.5,
-			0.5, 0.5
-		}
-	};
-
-	const sf::Color& particle_colour = Env.ParticleColor();
-	sf::Color draw_colour = particle_colour;
-	draw_colour.a = static_cast<uint8_t>(particle_colour.a * alpha);
-
-	draw_billboard(ctrl, cur_size, cur_size, false, tex_coords[type], draw_colour);
-}
-
-void Particle::draw_billboard(const CControl *ctrl, double width, double height, bool use_world_y_axis,
-                              const GLfloat* tex, const sf::Color& color) const {
-	TVector3d x_vec;
-	TVector3d y_vec;
-	TVector3d z_vec;
-
-	x_vec.x = ctrl->view_mat[0][0];
-	x_vec.y = ctrl->view_mat[0][1];
-	x_vec.z = ctrl->view_mat[0][2];
-
-	if (use_world_y_axis) {
-		y_vec = TVector3d(0, 1, 0);
-		x_vec = ProjectToPlane(y_vec, x_vec);
-		x_vec.Norm();
-		z_vec = CrossProduct(x_vec, y_vec);
-	} else {
-		y_vec.x = ctrl->view_mat[1][0];
-		y_vec.y = ctrl->view_mat[1][1];
-		y_vec.z = ctrl->view_mat[1][2];
-		z_vec.x = ctrl->view_mat[2][0];
-		z_vec.y = ctrl->view_mat[2][1];
-		z_vec.z = ctrl->view_mat[2][2];
-	}
-
-	TVector3d pt1 = pt - width/2.0 * x_vec - height/2.0 * y_vec;
-	TVector3d pt2 = pt1 + width * x_vec;
-	TVector3d pt3 = pt2 + height * y_vec;
-	TVector3d pt4 = pt3 + -width * x_vec;
-	const GLfloat vtx[] = {
-		static_cast<GLfloat>(pt1.x),
-		static_cast<GLfloat>(pt1.y),
-		static_cast<GLfloat>(pt1.z),
-		static_cast<GLfloat>(pt2.x),
-		static_cast<GLfloat>(pt2.y),
-		static_cast<GLfloat>(pt2.z),
-		static_cast<GLfloat>(pt3.x),
-		static_cast<GLfloat>(pt3.y),
-		static_cast<GLfloat>(pt3.z),
-		static_cast<GLfloat>(pt4.x),
-		static_cast<GLfloat>(pt4.y),
-		static_cast<GLfloat>(pt4.z),
-	};
-
-	Shader3D_SetTexturedArray(vtx, GL_FLOAT, tex, color);
-	Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
+// Append one camera-facing quad (pos + uv) to a batch.
+static void append_billboard_quad(const TVector3d& pt1, const TVector3d& pt2,
+                                  const TVector3d& pt3, const TVector3d& pt4,
+                                  const GLfloat* tex,
+                                  std::vector<GLfloat>& pos, std::vector<GLfloat>& uv) {
+	pos.push_back(static_cast<GLfloat>(pt1.x));
+	pos.push_back(static_cast<GLfloat>(pt1.y));
+	pos.push_back(static_cast<GLfloat>(pt1.z));
+	pos.push_back(static_cast<GLfloat>(pt2.x));
+	pos.push_back(static_cast<GLfloat>(pt2.y));
+	pos.push_back(static_cast<GLfloat>(pt2.z));
+	pos.push_back(static_cast<GLfloat>(pt3.x));
+	pos.push_back(static_cast<GLfloat>(pt3.y));
+	pos.push_back(static_cast<GLfloat>(pt3.z));
+	pos.push_back(static_cast<GLfloat>(pt4.x));
+	pos.push_back(static_cast<GLfloat>(pt4.y));
+	pos.push_back(static_cast<GLfloat>(pt4.z));
+	uv.insert(uv.end(), tex, tex + 8);
 }
 
 void create_new_particles(const TVector3d& loc, const TVector3d& vel, std::size_t num) {
@@ -366,13 +327,45 @@ void draw_particles(const CControl *ctrl) {
 	ScopedRenderMode rm(PARTICLES);
 	Tex.BindTex(SNOW_PART);
 
-	TMatrix<4, 4> id;
-	id.SetIdentity();
-	Shader3D_Begin3D();
-	Shader3D_SetModel3D(id);
+	// One batched draw for all particles (P2; was one draw call each). The
+	// billboard axes come from the view matrix and are shared; alpha fades per
+	// particle, so colour travels as a per-vertex array.
+	static std::vector<GLfloat> pos, uv;
+	static std::vector<GLubyte> col;
+	pos.clear();
+	uv.clear();
+	col.clear();
+
+	const sf::Color& particle_colour = Env.ParticleColor();
+	const TVector3d x_vec(ctrl->view_mat[0][0], ctrl->view_mat[0][1], ctrl->view_mat[0][2]);
+	const TVector3d y_vec(ctrl->view_mat[1][0], ctrl->view_mat[1][1], ctrl->view_mat[1][2]);
+
 	for (std::list<Particle>::const_iterator p = particles.begin(); p != particles.end(); ++p) {
-		if (p->age >= 0)
-			p->Draw(ctrl);
+		if (p->age < 0) continue;
+		TVector3d pt1 = p->pt - p->cur_size/2.0 * x_vec - p->cur_size/2.0 * y_vec;
+		TVector3d pt2 = pt1 + p->cur_size * x_vec;
+		TVector3d pt3 = pt2 + p->cur_size * y_vec;
+		TVector3d pt4 = pt3 + -p->cur_size * x_vec;
+		append_billboard_quad(pt1, pt2, pt3, pt4, tex_coords[p->type], pos, uv);
+		GLubyte a = static_cast<GLubyte>(particle_colour.a * p->alpha);
+		for (int v = 0; v < 4; v++) {
+			col.push_back(particle_colour.r);
+			col.push_back(particle_colour.g);
+			col.push_back(particle_colour.b);
+			col.push_back(a);
+		}
+	}
+	if (pos.empty()) return;
+
+	Shader3D_Begin3D();
+	// GLushort quad indices cap one call at 16384 quads; chunk (rarely needed).
+	const int kMaxQuads = 16000;
+	int nQuads = (int)pos.size() / 12;
+	for (int q = 0; q < nQuads; q += kMaxQuads) {
+		int n = std::min(kMaxQuads, nQuads - q);
+		Shader3D_SetTexturedColoredArray(pos.data() + q * 12, uv.data() + q * 8,
+		                                 col.data() + q * 16);
+		Shader3D_DrawQuadArray(n);
 	}
 	Shader3D_End();
 }
@@ -450,28 +443,6 @@ void generate_particles(const CControl *ctrl, double dtime, const TVector3d& pos
 static CFlakes Flakes;
 
 
-void TFlake::Draw(const TPlane& lp, const TPlane& rp, bool rotate_flake, float dir_angle,
-                  const sf::Color& color) const {
-	if ((DistanceToPlane(lp, pt) < 0) && (DistanceToPlane(rp, pt) < 0)) {
-		double angle = rotate_flake ? dir_angle * M_PI / 180.0 : 0.0;
-		TVector3d width(std::cos(angle) * size, 0.0, -std::sin(angle) * size);
-		TVector3d height(0.0, size, 0.0);
-		TVector3d pt1 = pt;
-		TVector3d pt2 = pt + width;
-		TVector3d pt3 = pt + width + height;
-		TVector3d pt4 = pt + height;
-		const GLfloat vtx[] = {
-			static_cast<GLfloat>(pt1.x), static_cast<GLfloat>(pt1.y), static_cast<GLfloat>(pt1.z),
-			static_cast<GLfloat>(pt2.x), static_cast<GLfloat>(pt2.y), static_cast<GLfloat>(pt2.z),
-			static_cast<GLfloat>(pt3.x), static_cast<GLfloat>(pt3.y), static_cast<GLfloat>(pt3.z),
-			static_cast<GLfloat>(pt4.x), static_cast<GLfloat>(pt4.y), static_cast<GLfloat>(pt4.z)
-		};
-		Shader3D_SetTexturedArray(vtx, GL_FLOAT, tex, color);
-		Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
-	}
-}
-
-
 TFlakeArea::TFlakeArea(
     std::size_t num_flakes,
     float xrange_,
@@ -508,13 +479,28 @@ void TFlakeArea::Draw(const CControl *ctrl) const {
 	Tex.BindTex(SNOW_PART);
 	const sf::Color& particle_colour = Env.ParticleColor();
 
-	TMatrix<4, 4> id;
-	id.SetIdentity();
-	Shader3D_Begin3D();
-	Shader3D_SetModel3D(id);
+	// One batched draw per area (P2; was one draw call per flake). Texture and
+	// colour are shared; the flake type picks a texture quadrant via its uv.
+	static std::vector<GLfloat> pos, uv;
+	pos.clear();
+	uv.clear();
+
+	const double angle = rotate_flake ? dir_angle * M_PI / 180.0 : 0.0;
+	const double cosa = std::cos(angle), sina = std::sin(angle);
 	for (std::size_t i=0; i < flakes.size(); i++) {
-		flakes[i].Draw(lp, rp, rotate_flake, dir_angle, particle_colour);
+		const TFlake& f = flakes[i];
+		if ((DistanceToPlane(lp, f.pt) < 0) && (DistanceToPlane(rp, f.pt) < 0)) {
+			TVector3d width(cosa * f.size, 0.0, -sina * f.size);
+			TVector3d height(0.0, f.size, 0.0);
+			append_billboard_quad(f.pt, f.pt + width, f.pt + width + height,
+			                      f.pt + height, f.tex, pos, uv);
+		}
 	}
+	if (pos.empty()) return;
+
+	Shader3D_Begin3D();
+	Shader3D_SetTexturedArray(pos.data(), GL_FLOAT, uv.data(), particle_colour);
+	Shader3D_DrawQuadArray((int)pos.size() / 12);
 	Shader3D_End();
 }
 
@@ -555,31 +541,6 @@ void CFlakes::MakeSnowFlake(std::size_t ar, std::size_t i) {
 	areas[ar].flakes[i].vel.y = -areas[ar].flakes[i].size * areas[ar].speed;
 
 	int type = std::rand() % 4;
-
-	static const GLfloat tex_coords[4][8] = {
-		{
-			0.0, 0.5,
-			0.5, 0.5,
-			0.5, 0.0,
-			0.0, 0.0
-		}, {
-			0.5, 0.5,
-			1.0, 0.5,
-			1.0, 0.0,
-			0.5, 0.0
-		}, {
-			0.0, 1.0,
-			0.5, 1.0,
-			0.5, 0.5,
-			0.0, 0.5
-		}, {
-			0.5, 1.0,
-			1.0, 1.0,
-			1.0, 0.5,
-			0.5, 0.5
-		}
-	};
-
 	areas[ar].flakes[i].tex = tex_coords[type];
 }
 
@@ -767,6 +728,18 @@ void TCurtain::SetStartParams(const CControl* ctrl) {
 void TCurtain::Draw(const sf::Color& color) const {
 	Tex.BindTex(texture);
 	double halfsize = size / 2.0;
+
+	// One batched draw per curtain (P2; was one draw call per tile).
+	static const GLfloat tile_uv[] = {
+		0.f, 1.f,
+		1.f, 1.f,
+		1.f, 0.f,
+		0.f, 0.f
+	};
+	static std::vector<GLfloat> pos, uv;
+	pos.clear();
+	uv.clear();
+
 	for (unsigned int co=0; co<numCols; co++) {
 		for (unsigned int row=0; row<numRows; row++) {
 			const TVector3d& pt = curtains[co][row].pt;
@@ -777,23 +750,13 @@ void TCurtain::Draw(const sf::Color& color) const {
 			TVector3d pt2 = pt + halfsize * width - halfsize * yaxis;
 			TVector3d pt3 = pt + halfsize * width + halfsize * yaxis;
 			TVector3d pt4 = pt - halfsize * width + halfsize * yaxis;
-
-			static const GLfloat tex[] = {
-				0.f, 1.f,
-				1.f, 1.f,
-				1.f, 0.f,
-				0.f, 0.f
-			};
-			const GLfloat vtx[] = {
-				static_cast<GLfloat>(pt1.x), static_cast<GLfloat>(pt1.y), static_cast<GLfloat>(pt1.z),
-				static_cast<GLfloat>(pt2.x), static_cast<GLfloat>(pt2.y), static_cast<GLfloat>(pt2.z),
-				static_cast<GLfloat>(pt3.x), static_cast<GLfloat>(pt3.y), static_cast<GLfloat>(pt3.z),
-				static_cast<GLfloat>(pt4.x), static_cast<GLfloat>(pt4.y), static_cast<GLfloat>(pt4.z)
-			    };
-			Shader3D_SetTexturedArray(vtx, GL_FLOAT, tex, color);
-			Shader3D_DrawArrays(GL_TRIANGLE_FAN, 4);
+			append_billboard_quad(pt1, pt2, pt3, pt4, tile_uv, pos, uv);
 		}
 	}
+	if (pos.empty()) return;
+
+	Shader3D_SetTexturedArray(pos.data(), GL_FLOAT, uv.data(), color);
+	Shader3D_DrawQuadArray((int)pos.size() / 12);
 }
 
 void TCurtain::Update(float timestep, const TVector3d& drift, const CControl* ctrl) {
@@ -831,10 +794,7 @@ void CCurtain::Draw() {
 	ScopedRenderMode rm(PARTICLES);
 	const sf::Color& particle_colour = Env.ParticleColor();
 
-	TMatrix<4, 4> id;
-	id.SetIdentity();
 	Shader3D_Begin3D();
-	Shader3D_SetModel3D(id);
 	for (std::size_t i=0; i<curtains.size(); i++) {
 		curtains[i].Draw(particle_colour);
 	}

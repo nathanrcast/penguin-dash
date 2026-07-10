@@ -76,6 +76,12 @@ void Shader3D_DrawElementsU32(unsigned int count, const unsigned int* indices);
 // draws nQuads consecutive quads (4 verts each) as triangles (no GL_QUADS in GLES2).
 void Shader3D_Begin3D();
 void Shader3D_SetModel3D(const TMatrix<4, 4>& model);
+// Fast batch path: fold a rotation shared by all objects into the base once
+// (uploads the normal matrix), then per object only a translation (uploads
+// mvp/modelview, skips the 4x4 multiply + normal-matrix inverse). Begin3D
+// resets the base to the plain view.
+void Shader3D_SetModelRotation(const TMatrix<4, 4>& rot);
+void Shader3D_SetModelTranslation(double x, double y, double z);
 void Shader3D_SetObjectArrays(const float* pos, const short* tex, float nx, float ny, float nz);
 void Shader3D_DrawQuadArray(int nQuads);
 
@@ -84,6 +90,9 @@ void Shader3D_DrawQuadArray(int nQuads);
 // (fog plane gradient). DrawArrays draws the bound arrays with any GL mode.
 void Shader3D_SetTexturedArray(const void* pos, unsigned int posType, const float* tex, const sf::Color& col);
 void Shader3D_SetColoredArray(const float* pos, const unsigned char* color);
+// Textured + per-vertex colour, unlit (batched race particles).
+void Shader3D_SetTexturedColoredArray(const float* pos, const float* tex,
+                                      const unsigned char* color);
 // Unlit geometry with one constant colour (Tux shadow).
 void Shader3D_SetPositionColorArray(const float* pos, const sf::Color& col);
 // Lit textured geometry with per-vertex normals and a constant colour/material

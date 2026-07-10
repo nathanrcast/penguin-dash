@@ -49,9 +49,6 @@ struct TFlake {
 	TVector3d vel;
 	float size;
 	const GLfloat* tex;
-
-	void Draw(const TPlane& lp, const TPlane& rp, bool rotate_flake, float dir_angle,
-	          const sf::Color& color) const;
 };
 
 struct TFlakeArea {

@@ -59,10 +59,17 @@ void DrawTrees() {
 	set_material(colWhite, colBlack, 1.0);
 
 	// GLES2: billboards through the 3D shader. Snapshot env + base proj/view
-	// once; each object supplies a model matrix (translate, replacing
-	// glPushMatrix/glTranslate) and draws its quads as triangles. The TREES
-	// render mode's alpha test is reproduced as a discard in the shader.
+	// once; the constant 1° y-rotation (perf_level > 1) is folded into the
+	// shared model base, so each object costs only a translation upload —
+	// no per-tree matrix multiply or normal-matrix inverse. The TREES render
+	// mode's alpha test is reproduced as a discard in the shader.
 	Shader3D_Begin3D();
+
+	if (param.perf_level > 1) {
+		TMatrix<4, 4> rot;
+		rot.SetRotationMatrix(1, 'y');
+		Shader3D_SetModelRotation(rot);
+	}
 
 	// Trees
 	for (std::size_t i = 0; i< Course.CollArr.size(); i++) {
@@ -76,16 +83,7 @@ void DrawTrees() {
 			Course.ObjTypes[tree_type].texture->Bind();
 		}
 
-		TMatrix<4, 4> model, trans;
-		trans.SetTranslationMatrix(Course.CollArr[i].pt.x, Course.CollArr[i].pt.y, Course.CollArr[i].pt.z);
-		if (param.perf_level > 1) {
-			TMatrix<4, 4> rot;
-			rot.SetRotationMatrix(1, 'y');
-			model = trans * rot;
-		} else {
-			model = trans;
-		}
-		Shader3D_SetModel3D(model);
+		Shader3D_SetModelTranslation(Course.CollArr[i].pt.x, Course.CollArr[i].pt.y, Course.CollArr[i].pt.z);
 
 		float treeRadius = Course.CollArr[i].diam / 2.0;
 		float treeHeight = Course.CollArr[i].height;
@@ -116,7 +114,10 @@ void DrawTrees() {
 		Shader3D_DrawQuadArray(2); // 8 verts = 2 crossed quads
 	}
 
-	// Items
+	// Items (translation only: reset the shared base if the trees rotated it)
+	if (param.perf_level > 1)
+		Shader3D_SetModelRotation(TMatrix<4, 4>::getIdentity());
+
 	const TObjectType* item_type = nullptr;
 
 	for (std::size_t i = 0; i< Course.NocollArr.size(); i++) {
@@ -131,9 +132,7 @@ void DrawTrees() {
 			item_type->texture->Bind();
 		}
 
-		TMatrix<4, 4> model;
-		model.SetTranslationMatrix(Course.NocollArr[i].pt.x, Course.NocollArr[i].pt.y, Course.NocollArr[i].pt.z);
-		Shader3D_SetModel3D(model);
+		Shader3D_SetModelTranslation(Course.NocollArr[i].pt.x, Course.NocollArr[i].pt.y, Course.NocollArr[i].pt.z);
 
 		double itemRadius = Course.NocollArr[i].diam / 2;
 		double itemHeight = Course.NocollArr[i].height;

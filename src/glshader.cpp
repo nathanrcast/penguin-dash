@@ -392,7 +392,9 @@ void normalMatrixFromMV(const double mv[16], float out[9]); // defined below
 
 // Base proj/view captured by Shader3D_Begin3D; Shader3D_SetModel3D composes a
 // per-object model onto them (avoids the fixed-function matrix stack for objects).
-TMatrix<4, 4> g3d_proj, g3d_view;
+// g3d_base = view * (shared object rotation) — the fast per-object translation
+// path (trees/items) composes onto it without touching the normal matrix.
+TMatrix<4, 4> g3d_proj, g3d_view, g3d_base;
 
 void cacheLocations3D(const TShaderProgram& p) {
 	if (a3d.cached) return;
@@ -461,18 +463,28 @@ void snapEnv3D() {
 	pglUniform1f(a3d.fogEnd, state.fogEnd);
 }
 
-// Upload mvp/modelview/normalMatrix given a modelview TMatrix.
-void uploadMatrices3D(const TMatrix<4, 4>& projM, const TMatrix<4, 4>& mvM) {
+// Upload mvp + modelview only (normal matrix left as-is — for models that
+// don't change it, i.e. pure translations of the current base).
+void uploadMVP_MV(const TMatrix<4, 4>& projM, const TMatrix<4, 4>& mvM) {
 	float m16[16];
 	MatrixToGL(projM * mvM, m16);
 	pglUniformMatrix4fv(a3d.mvp, 1, GL_FALSE, m16);
 	MatrixToGL(mvM, m16);
 	pglUniformMatrix4fv(a3d.modelview, 1, GL_FALSE, m16);
+}
+
+void uploadNormalMatrix(const TMatrix<4, 4>& mvM) {
 	double mvd[16];
 	for (int i = 0; i < 16; i++) mvd[i] = mvM.data()[i];
 	float nm[9];
 	normalMatrixFromMV(mvd, nm);
 	pglUniformMatrix3fv(a3d.normalMatrix, 1, GL_FALSE, nm);
+}
+
+// Upload mvp/modelview/normalMatrix given a modelview TMatrix.
+void uploadMatrices3D(const TMatrix<4, 4>& projM, const TMatrix<4, 4>& mvM) {
+	uploadMVP_MV(projM, mvM);
+	uploadNormalMatrix(mvM);
 }
 
 // normalMatrix = (upper-left 3x3 of modelview)^-T, column-major for glUniformMatrix3fv.
@@ -540,12 +552,35 @@ void Shader3D_Begin3D() {
 	const TRenderState& state = RenderStateSnapshot();
 	g3d_proj = state.projection;
 	g3d_view = state.modelview;
+	g3d_base = g3d_view;
 	snapEnv3D();
+	// Identity model is ready to draw; callers only need SetModel* for objects.
+	uploadMatrices3D(g3d_proj, g3d_view);
 }
 
 void Shader3D_SetModel3D(const TMatrix<4, 4>& model) {
 	if (!CoreShaders.ready) return;
 	uploadMatrices3D(g3d_proj, g3d_view * model); // modelview = view * model
+}
+
+// Fast per-object path: a rotation shared by every object in the batch is folded
+// into the base (normal matrix uploaded once), then each object costs only a
+// translated 4th column + mvp/mv upload — no 4x4 multiply, no cofactor inverse.
+void Shader3D_SetModelRotation(const TMatrix<4, 4>& rot) {
+	if (!CoreShaders.ready) return;
+	g3d_base = g3d_view * rot;
+	uploadNormalMatrix(g3d_base);
+}
+
+void Shader3D_SetModelTranslation(double x, double y, double z) {
+	if (!CoreShaders.ready) return;
+	// modelview = base * T: base with 4th column = base * [x y z 1]
+	// (TMatrix is column-major: m[col][row]).
+	TMatrix<4, 4> mv = g3d_base;
+	for (int r = 0; r < 4; r++)
+		mv[3][r] = x * g3d_base[0][r] + y * g3d_base[1][r]
+		         + z * g3d_base[2][r] + g3d_base[3][r];
+	uploadMVP_MV(g3d_proj, mv);
 }
 
 // Bind a per-object billboard: float xyz positions, short st texcoords (tight),
@@ -564,15 +599,21 @@ void Shader3D_SetObjectArrays(const float* pos, const GLshort* tex,
 	}
 }
 
-// Draw nQuads consecutive quads (4 verts each) as triangles.
+// Draw nQuads consecutive quads (4 verts each) as triangles. The index pattern
+// is identical for every call, so the table is built once and grown on demand
+// (it used to be rebuilt + heap-allocated per call — per tree, per frame).
+// GLushort indices cap one call at 16384 quads; batch callers chunk above that.
 void Shader3D_DrawQuadArray(int nQuads) {
 	if (!CoreShaders.ready || a3d.pos < 0 || nQuads <= 0) return;
-	std::vector<GLushort> idx;
-	idx.reserve(nQuads * 6);
-	for (int q = 0; q < nQuads; q++) {
-		GLushort b = (GLushort)(q * 4);
-		idx.push_back(b); idx.push_back(b + 1); idx.push_back(b + 2);
-		idx.push_back(b); idx.push_back(b + 2); idx.push_back(b + 3);
+	static std::vector<GLushort> idx;
+	if ((int)idx.size() < nQuads * 6) {
+		int from = (int)idx.size() / 6;
+		idx.reserve(nQuads * 6);
+		for (int q = from; q < nQuads; q++) {
+			GLushort b = (GLushort)(q * 4);
+			idx.push_back(b); idx.push_back(b + 1); idx.push_back(b + 2);
+			idx.push_back(b); idx.push_back(b + 2); idx.push_back(b + 3);
+		}
 	}
 	glDrawElements(GL_TRIANGLES, nQuads * 6, GL_UNSIGNED_SHORT, idx.data());
 }
@@ -592,6 +633,20 @@ void Shader3D_SetTexturedArray(const void* pos, unsigned int posType, const floa
 		pglDisableVertexAttribArray(a3d.color);
 		pglVertexAttrib4f(a3d.color, col.r / 255.f, col.g / 255.f, col.b / 255.f, col.a / 255.f);
 	}
+}
+
+// Unlit textured primitive with per-vertex colour (batched race particles —
+// alpha fades per particle): position + texcoord + colour arrays, no normal.
+void Shader3D_SetTexturedColoredArray(const float* pos, const float* tex,
+                                      const unsigned char* color) {
+	if (!CoreShaders.ready) return;
+	pglEnableVertexAttribArray(a3d.pos);
+	pglVertexAttribPointer(a3d.pos, 3, GL_FLOAT, GL_FALSE, 0, pos);
+	pglEnableVertexAttribArray(a3d.texcoord);
+	pglVertexAttribPointer(a3d.texcoord, 2, GL_FLOAT, GL_FALSE, 0, tex);
+	pglEnableVertexAttribArray(a3d.color);
+	pglVertexAttribPointer(a3d.color, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, color);
+	if (a3d.normal >= 0) pglDisableVertexAttribArray(a3d.normal);
 }
 
 // Unlit coloured primitive (fog plane): position array (3 float) + colour array
