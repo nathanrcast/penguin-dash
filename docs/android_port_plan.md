@@ -16,9 +16,9 @@ Java-activity path. Reuse from `assaultcube/source/android/`: the Gradle wrapper
 `app` build.gradle signing + per-ABI (arm64-v8a) + CMake wiring, `keystore.properties` pattern, and the
 extract-assets-on-new-versionCode idea. Do **not** reuse its SDL/gl4es/openal native deps.
 
-Toolchain on `.13`: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0.0,
-`~/keystores/onecube-android-release.jks`, full JDK at `~/amh-android-build/jdk21`
-(system java-21 is a JRE — build with `JAVA_HOME=~/amh-android-build/jdk21 ./gradlew ...`).
+Toolchain: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0.0, JDK 21 (a full JDK —
+a JRE is not enough for Gradle/AGP; point `JAVA_HOME` at it). Release signing reads
+`android/keystore.properties` (gitignored); the keystore lives outside the repo.
 
 ## Sub-milestones (device-tested on Tab A9+ / OnePlus N200 — both arm64)
 
@@ -102,17 +102,33 @@ Toolchain on `.13`: NDK 26.3.11579264 + 27.3, SDK platform-34 / build-tools 34.0
     stubs failed every `openFromFile`, leaving `musics[]` empty while the theme table indexed into it —
     the stubs now report load success as a silent no-op so the engine's music/sound bookkeeping stays
     valid (real audio is still A3). **Effectively playable now, pending controls + audio.**
-  - **NEXT: A2 (touch + tilt gameplay controls), then A3 (Oboe audio).** The race runs but there's no
-    gameplay input yet — A2 wires `ASensor` accelerometer steering + on-screen brake/jump/paddle buttons
-    (deadzone/sensitivity tuned for ages 6–10). Then A3 for music/SFX (Oboe + a vorbis decoder). The
-    debug screenshot path stays stubbed (A4-gated) and can be finished opportunistically.
-- **A2 – Input (touch + tilt):** `AInputEvent` touch → menu/UI + on-screen buttons (brake/jump/paddle);
-  `ASensor` accelerometer → steering, with deadzone/sensitivity tuned for ages 6–10.
-- **A3 – Audio:** replace `sf::Music`/`sf::Sound` with Oboe (music + SFX).
+  - **A2 DONE 2026-07-01:** touch and tilt gameplay controls are wired. `AInputEvent` still feeds
+    menu/UI pointer events, and bottom-screen multi-touch zones now synthesize virtual joystick buttons
+    for brake/paddle/jump with matching translucent race HUD labels. `ASensor` accelerometer samples are
+    drained through the native looper and reported as joystick X steering with deadzone, smoothing, and
+    conservative sensitivity for younger players. `./gradlew :app:assembleDebug` passes.
+  - **A3 CODE DONE 2026-07-01:** the Android SFML audio stubs now keep file-backed `SoundBuffer`,
+    `Sound`, and `Music` objects and delegate playback to Android `MediaPlayer` through JNI, so the
+    existing tracked `.wav` SFX and `.ogg` music assets play after extraction. Missing files still load as
+    silent placeholders to preserve `CMusic` theme bookkeeping and avoid the earlier race-entry crash.
+    `./gradlew :app:assembleDebug` passes. **NEXT: A5 sign/sideload and on-device audio/control tuning.**
+  - **A5 RELEASE BUILD DONE 2026-07-01:** `./gradlew :app:assembleRelease` now passes and produces
+    `android/app/build/outputs/apk/release/app-release.apk` (about 42 MB with data assets). Release lint
+    needed an explicit dependency on the generated asset manifest, now wired in `android/app/build.gradle`.
+    That environment had no `keystore.properties`, so Gradle used the configured debug-signing fallback.
+  - **A5 PRODUCTION SIGNING DONE 2026-07-09:** `assembleRelease` rebuilt with `keystore.properties`
+    pointing at the shared release keystore; `apksigner verify --print-certs` confirms the release cert
+    (CN=OneCube), not the debug fallback. Desktop `etr` re-verified building alongside. Remaining:
+    `adb install -r` to the tablets + on-device audio/control verification (needs a device attached).
+- **A2 – Input (touch + tilt):** DONE. `AInputEvent` touch → menu/UI + on-screen buttons
+  (brake/jump/paddle); `ASensor` accelerometer → steering, with deadzone/sensitivity tuned for ages 6–10.
+- **A3 – Audio:** CODE DONE via Android `MediaPlayer` for `sf::Music`/`sf::Sound` (music + SFX);
+  needs audible on-device verification.
 - **A4 – Assets:** package `data/` into APK assets; AAssetManager-backed IO, extract-on-first-run to
   `getExternalFilesDir()` keyed on versionCode (OneCube pattern).
-- **A5 – Sign & sideload:** `keystore.properties` → `onecube-android-release.jks`, `assembleRelease`,
-  `adb install -r` to the tablets. Then create/push `nathanrcast/penguin-dash` (public, GPL).
+- **A5 – Sign & sideload:** PRODUCTION-SIGNED BUILD DONE (2026-07-09). Remaining: `adb install -r`
+  to the tablets, then on-device audio/control tuning pass.
+  Then create/push `nathanrcast/penguin-dash` (public, GPL).
 
 ## Risks
 

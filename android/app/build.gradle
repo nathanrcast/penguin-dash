@@ -115,4 +115,7 @@ tasks.configureEach { t ->
     if (t.name.startsWith('merge') && t.name.endsWith('Assets')) {
         t.dependsOn genAssetManifest
     }
+    if (t.name.toLowerCase().contains('lint')) {
+        t.dependsOn genAssetManifest
+    }
 }

@@ -5,7 +5,7 @@
 // then made real one at a time:
 //   A1c  Window/Keyboard/Event  -> the native_main EGL shim + AInputEvent
 //   A1d  Image/Texture/Font/Text/Sprite/RenderTarget -> stb_image/stb_truetype + Shader2D
-//   A3   SoundBuffer/Sound/Music -> Oboe + stb_vorbis
+//   A3   SoundBuffer/Sound/Music -> Android MediaPlayer (.wav/.ogg)
 // Grep TODO(A1c/A1d/A3) for what remains to implement.
 
 #include <SFML/Graphics.hpp>
@@ -13,6 +13,7 @@
 #include <SFML/Window/Context.hpp>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
+#include <android/log.h>
 #include <android/keycodes.h>
 #include <algorithm>
 #include <cmath>
@@ -22,6 +23,9 @@
 
 #include "glshader.h"      // Shader2D_* — the GLES2 2D draw path (A1d)
 #include "native_bridge.h"
+
+#define LOG_TAG "PenguinDashAudio"
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -33,6 +37,9 @@ namespace {
 // by the state manager to place clicks. Updated as pointer events are drained.
 int g_pointer_x = 0;
 int g_pointer_y = 0;
+bool g_key_down[sf::Keyboard::KeyCount] = {};
+bool g_joy_button_down[16] = {};
+float g_joy_axis_x = 0.f;
 
 // ---- 2D draw helpers (A1d) ----
 // The Shader2D program uses a bottom-left ortho (Setup2dScene); SFML drawables
@@ -126,9 +133,189 @@ sf::Keyboard::Key MapKey(int code) {
         case AKEYCODE_DPAD_LEFT:    return K::Left;
         case AKEYCODE_DPAD_RIGHT:   return K::Right;
         case AKEYCODE_SPACE:        return K::Space;
+        case AKEYCODE_A:            return K::A;
+        case AKEYCODE_C:            return K::C;
+        case AKEYCODE_D:            return K::D;
+        case AKEYCODE_F:            return K::F;
+        case AKEYCODE_H:            return K::H;
+        case AKEYCODE_P:            return K::P;
+        case AKEYCODE_R:            return K::R;
+        case AKEYCODE_S:            return K::S;
+        case AKEYCODE_T:            return K::T;
+        case AKEYCODE_W:            return K::W;
         default:                    return K::Unknown;
     }
 }
+
+bool AudioFileExists(const std::string& filename) {
+    FILE* f = std::fopen(filename.c_str(), "rb");
+    if (!f) return false;
+    std::fclose(f);
+    return true;
+}
+
+JNIEnv* GetJniEnv() {
+    JavaVM* vm = pd::JavaVm();
+    if (!vm) return nullptr;
+
+    JNIEnv* env = nullptr;
+    jint status = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (status == JNI_OK) return env;
+    if (status == JNI_EDETACHED && vm->AttachCurrentThread(&env, nullptr) == JNI_OK)
+        return env;
+    return nullptr;
+}
+
+bool ClearJavaException(JNIEnv* env, const char* where) {
+    if (!env || !env->ExceptionCheck()) return false;
+    LOGW("MediaPlayer exception in %s", where);
+    env->ExceptionClear();
+    return true;
+}
+
+struct JavaMediaPlayer {
+    jobject player = nullptr;
+    bool prepared = false;
+
+    ~JavaMediaPlayer() { release(); }
+
+    bool create(JNIEnv* env) {
+        if (player) return true;
+        jclass cls = env->FindClass("android/media/MediaPlayer");
+        if (!cls || ClearJavaException(env, "FindClass(MediaPlayer)")) return false;
+        jmethodID ctor = env->GetMethodID(cls, "<init>", "()V");
+        if (!ctor || ClearJavaException(env, "MediaPlayer.<init>")) {
+            env->DeleteLocalRef(cls);
+            return false;
+        }
+        jobject local = env->NewObject(cls, ctor);
+        if (!local || ClearJavaException(env, "NewObject(MediaPlayer)")) {
+            env->DeleteLocalRef(cls);
+            return false;
+        }
+        player = env->NewGlobalRef(local);
+        env->DeleteLocalRef(local);
+        env->DeleteLocalRef(cls);
+        return player != nullptr;
+    }
+
+    bool callVoid(const char* name, const char* sig, const char* where) {
+        JNIEnv* env = GetJniEnv();
+        if (!env || !player) return false;
+        jclass cls = env->GetObjectClass(player);
+        jmethodID method = env->GetMethodID(cls, name, sig);
+        env->DeleteLocalRef(cls);
+        if (!method || ClearJavaException(env, where)) return false;
+        env->CallVoidMethod(player, method);
+        return !ClearJavaException(env, where);
+    }
+
+    bool prepareFile(const std::string& filename) {
+        JNIEnv* env = GetJniEnv();
+        if (!env || !create(env)) return false;
+
+        reset();
+        jclass cls = env->GetObjectClass(player);
+        jmethodID setDataSource = env->GetMethodID(cls, "setDataSource", "(Ljava/lang/String;)V");
+        jmethodID prepare = env->GetMethodID(cls, "prepare", "()V");
+        env->DeleteLocalRef(cls);
+        if (!setDataSource || !prepare || ClearJavaException(env, "MediaPlayer methods"))
+            return false;
+
+        jstring path = env->NewStringUTF(filename.c_str());
+        env->CallVoidMethod(player, setDataSource, path);
+        env->DeleteLocalRef(path);
+        if (ClearJavaException(env, "setDataSource")) return false;
+
+        env->CallVoidMethod(player, prepare);
+        prepared = !ClearJavaException(env, "prepare");
+        return prepared;
+    }
+
+    bool start() {
+        if (!prepared) return false;
+        if (callVoid("start", "()V", "start")) return true;
+        prepared = false;
+        return false;
+    }
+
+    void reset() {
+        if (!player) return;
+        callVoid("reset", "()V", "reset");
+        prepared = false;
+    }
+
+    void stop() {
+        if (!player) return;
+        if (isPlaying()) callVoid("stop", "()V", "stop");
+        prepared = false;
+    }
+
+    void release() {
+        if (!player) return;
+        JNIEnv* env = GetJniEnv();
+        if (env) {
+            callVoid("release", "()V", "release");
+            env->DeleteGlobalRef(player);
+        }
+        player = nullptr;
+        prepared = false;
+    }
+
+    void setLooping(bool loop) {
+        JNIEnv* env = GetJniEnv();
+        if (!env || !player) return;
+        jclass cls = env->GetObjectClass(player);
+        jmethodID method = env->GetMethodID(cls, "setLooping", "(Z)V");
+        env->DeleteLocalRef(cls);
+        if (!method || ClearJavaException(env, "setLooping method")) return;
+        env->CallVoidMethod(player, method, loop ? JNI_TRUE : JNI_FALSE);
+        ClearJavaException(env, "setLooping");
+    }
+
+    void setVolume(float volume) {
+        JNIEnv* env = GetJniEnv();
+        if (!env || !player) return;
+        jclass cls = env->GetObjectClass(player);
+        jmethodID method = env->GetMethodID(cls, "setVolume", "(FF)V");
+        env->DeleteLocalRef(cls);
+        if (!method || ClearJavaException(env, "setVolume method")) return;
+        float gain = std::max(0.f, std::min(volume / 100.f, 1.f));
+        env->CallVoidMethod(player, method, gain, gain);
+        ClearJavaException(env, "setVolume");
+    }
+
+    bool isPlaying() const {
+        JNIEnv* env = GetJniEnv();
+        if (!env || !player) return false;
+        jclass cls = env->GetObjectClass(player);
+        jmethodID method = env->GetMethodID(cls, "isPlaying", "()Z");
+        env->DeleteLocalRef(cls);
+        if (!method || ClearJavaException(env, "isPlaying method")) return false;
+        jboolean playing = env->CallBooleanMethod(player, method);
+        if (ClearJavaException(env, "isPlaying")) return false;
+        return playing == JNI_TRUE;
+    }
+};
+
+struct AudioFile {
+    std::string filename;
+    bool exists = false;
+};
+
+struct SoundData {
+    std::string filename;
+    bool exists = false;
+    bool missingLogged = false;
+    JavaMediaPlayer player;
+};
+
+struct MusicData {
+    std::string filename;
+    bool exists = false;
+    bool missingLogged = false;
+    JavaMediaPlayer player;
+};
 } // namespace
 
 namespace sf {
@@ -146,13 +333,17 @@ const Color Color::Transparent(0, 0, 0, 0);
 const BlendMode BlendAlpha = {};
 const RenderStates RenderStates::Default = RenderStates();
 
-// ---- Keyboard / Mouse / Joystick (A1c: pointer cache; A2: tilt/keys) ----
-bool Keyboard::isKeyPressed(Key) { return false; }
+// ---- Keyboard / Mouse / Joystick (A1c: pointer cache; A2: tilt/buttons) ----
+bool Keyboard::isKeyPressed(Key key) {
+    return key >= 0 && key < KeyCount && g_key_down[key];
+}
 Vector2i Mouse::getPosition() { return Vector2i(g_pointer_x, g_pointer_y); }
-bool Joystick::isConnected(unsigned int) { return false; }
-unsigned int Joystick::getButtonCount(unsigned int) { return 0; }
-bool Joystick::hasAxis(unsigned int, Axis) { return false; }
-float Joystick::getAxisPosition(unsigned int, Axis) { return 0.f; }
+bool Joystick::isConnected(unsigned int joystick) { return joystick == 0; }
+unsigned int Joystick::getButtonCount(unsigned int joystick) { return joystick == 0 ? 4 : 0; }
+bool Joystick::hasAxis(unsigned int joystick, Axis axis) { return joystick == 0 && axis == X; }
+float Joystick::getAxisPosition(unsigned int joystick, Axis axis) {
+    return (joystick == 0 && axis == X) ? g_joy_axis_x : 0.f;
+}
 
 // ---- VideoMode / Window (A1c: bridged to native_main's EGL surface) ----
 VideoMode VideoMode::getDesktopMode() {
@@ -201,6 +392,25 @@ bool Window::pollEvent(Event& event) {
                                                           : Event::KeyReleased;
             event.key.code = MapKey(ie.keycode);
             event.key.alt = event.key.control = event.key.shift = event.key.system = false;
+            if (event.key.code >= 0 && event.key.code < Keyboard::KeyCount)
+                g_key_down[event.key.code] = (ie.kind == pd::EvKind::KeyDown);
+			break;
+        case pd::EvKind::JoystickMove:
+            event.type = Event::JoystickMoved;
+            event.joystickMove.joystickId = ie.joystickId;
+            event.joystickMove.axis = (ie.joystickAxis == 0) ? Joystick::X : Joystick::Y;
+            event.joystickMove.position = ie.joystickPosition;
+            if (ie.joystickId == 0 && event.joystickMove.axis == Joystick::X)
+                g_joy_axis_x = ie.joystickPosition;
+            break;
+        case pd::EvKind::JoystickButtonDown:
+        case pd::EvKind::JoystickButtonUp:
+            event.type = (ie.kind == pd::EvKind::JoystickButtonDown) ? Event::JoystickButtonPressed
+                                                                      : Event::JoystickButtonReleased;
+            event.joystickButton.joystickId = ie.joystickId;
+            event.joystickButton.button = ie.joystickButton;
+            if (ie.joystickId == 0 && ie.joystickButton < 16)
+                g_joy_button_down[ie.joystickButton] = (ie.kind == pd::EvKind::JoystickButtonDown);
             break;
     }
     return true;
@@ -542,26 +752,109 @@ void RenderTexture::setSmooth(bool) {}
 Vector2u RenderTexture::getSize() const { return Vector2u(m_w, m_h); }
 bool RenderTexture::setActive(bool) { return true; }
 
-// ---- Audio (silent no-op until A3: Oboe + stb_vorbis) ----
-// load/open report success so the engine's music/sound bookkeeping stays valid
-// (CMusic indexes musics[] into its theme table — a failed load left that empty,
-// so theme setup dereferenced an out-of-bounds Music* and crashed). Playback is
-// a no-op: the game runs silently until real audio lands.
+// ---- Audio (A3: Android MediaPlayer backend) ----
+// load/open still report success if an audio file is absent so the engine's
+// music/theme bookkeeping stays valid. When the packaged .wav/.ogg assets are
+// present in the extracted data dir, playback is delegated to Android's native
+// MediaPlayer via JNI.
 SoundBuffer::SoundBuffer() : m_impl(nullptr) {}
-SoundBuffer::~SoundBuffer() {}
-bool SoundBuffer::loadFromFile(const std::string&) { return true; }
+SoundBuffer::~SoundBuffer() { delete static_cast<AudioFile*>(m_impl); }
+bool SoundBuffer::loadFromFile(const std::string& filename) {
+    delete static_cast<AudioFile*>(m_impl);
+    AudioFile* file = new AudioFile();
+    file->filename = filename;
+    file->exists = AudioFileExists(filename);
+    if (!file->exists)
+        LOGW("sound file missing, keeping silent placeholder: %s", filename.c_str());
+    m_impl = file;
+    return true;
+}
 
-Sound::Sound() : m_buffer(nullptr) {}
-Sound::~Sound() {}
-void Sound::setBuffer(const SoundBuffer& b) { m_buffer = &b; }
-void Sound::play() { m_status = Playing; }
-void Sound::stop() { m_status = Stopped; }
+Sound::Sound() : m_buffer(nullptr), m_impl(new SoundData()) {}
+Sound::~Sound() { delete static_cast<SoundData*>(m_impl); }
+void Sound::setBuffer(const SoundBuffer& b) {
+    m_buffer = &b;
+    SoundData* data = static_cast<SoundData*>(m_impl);
+    AudioFile* file = static_cast<AudioFile*>(b.impl());
+    if (!data || !file) return;
+    data->filename = file->filename;
+    data->exists = file->exists;
+    data->missingLogged = false;
+}
+void Sound::setVolume(float volume) {
+    SoundSource::setVolume(volume);
+    SoundData* data = static_cast<SoundData*>(m_impl);
+    if (data) data->player.setVolume(volume);
+}
+void Sound::play() {
+    SoundData* data = static_cast<SoundData*>(m_impl);
+    if (!data || data->filename.empty()) { m_status = Stopped; return; }
+    if (!data->exists) {
+        if (!data->missingLogged) {
+            LOGW("sound playback skipped, file missing: %s", data->filename.c_str());
+            data->missingLogged = true;
+        }
+        m_status = Stopped;
+        return;
+    }
+    if (data->player.isPlaying()) { m_status = Playing; return; }
+    if (!data->player.prepareFile(data->filename)) { m_status = Stopped; return; }
+    data->player.setLooping(m_loop);
+    data->player.setVolume(m_volume);
+    m_status = data->player.start() ? Playing : Stopped;
+}
+void Sound::stop() {
+    SoundData* data = static_cast<SoundData*>(m_impl);
+    if (data) data->player.stop();
+    m_status = Stopped;
+}
+SoundSource::Status Sound::getStatus() const {
+    SoundData* data = static_cast<SoundData*>(m_impl);
+    return (data && data->player.isPlaying()) ? Playing : Stopped;
+}
 
 Music::Music() : m_impl(nullptr) {}
-Music::~Music() {}
-bool Music::openFromFile(const std::string&) { return true; }
-void Music::play() { m_status = Playing; }
-void Music::stop() { m_status = Stopped; }
+Music::~Music() { delete static_cast<MusicData*>(m_impl); }
+bool Music::openFromFile(const std::string& filename) {
+    delete static_cast<MusicData*>(m_impl);
+    MusicData* data = new MusicData();
+    data->filename = filename;
+    data->exists = AudioFileExists(filename);
+    if (!data->exists)
+        LOGW("music file missing, keeping silent placeholder: %s", filename.c_str());
+    m_impl = data;
+    return true;
+}
+void Music::setVolume(float volume) {
+    SoundSource::setVolume(volume);
+    MusicData* data = static_cast<MusicData*>(m_impl);
+    if (data) data->player.setVolume(volume);
+}
+void Music::play() {
+    MusicData* data = static_cast<MusicData*>(m_impl);
+    if (!data || data->filename.empty()) { m_status = Stopped; return; }
+    if (!data->exists) {
+        if (!data->missingLogged) {
+            LOGW("music playback skipped, file missing: %s", data->filename.c_str());
+            data->missingLogged = true;
+        }
+        m_status = Stopped;
+        return;
+    }
+    if (!data->player.prepareFile(data->filename)) { m_status = Stopped; return; }
+    data->player.setLooping(m_loop);
+    data->player.setVolume(m_volume);
+    m_status = data->player.start() ? Playing : Stopped;
+}
+void Music::stop() {
+    MusicData* data = static_cast<MusicData*>(m_impl);
+    if (data) data->player.stop();
+    m_status = Stopped;
+}
+SoundSource::Status Music::getStatus() const {
+    MusicData* data = static_cast<MusicData*>(m_impl);
+    return (data && data->player.isPlaying()) ? Playing : Stopped;
+}
 
 // ---- Context::getFunction -> GLES2 entry points via EGL ----
 GlFunctionPointer Context::getFunction(const char* name) {

@@ -10,12 +10,16 @@
 #include <android/native_window.h>
 #include <android/input.h>
 #include <android/keycodes.h>
+#include <android/sensor.h>
 #include <android/asset_manager.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <sys/stat.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <deque>
+#include <map>
 #include <string>
 
 #include "native_bridge.h"
@@ -38,6 +42,14 @@ struct Engine {
     bool running = false;  // true once we hold a usable GL surface
     bool closing = false;  // activity asked to finish
     std::deque<pd::InputEvent> input;  // filled on the glue thread, drained by the engine
+    std::map<int32_t, int> pointerButtons;  // Android pointer id -> virtual button
+    int virtualButtonRefs[4] = {0, 0, 0, 0};
+    ASensorManager* sensorManager = nullptr;
+    const ASensor* accelerometer = nullptr;
+    ASensorEventQueue* sensorQueue = nullptr;
+    bool sensorsEnabled = false;
+    float tiltAxis = 0.f;       // smoothed -1..1
+    float lastTiltEvent = 999.f;
 };
 
 Engine g_engine;
@@ -45,6 +57,139 @@ Engine g_engine;
 // Filesystem roots (A4). Resolved once in extract_assets().
 std::string g_dataDir;     // <internalDataPath>/etr — the ETR data root
 std::string g_configDir;   // <internalDataPath>     — writable (options/players)
+
+constexpr int LOOPER_ID_SENSOR = LOOPER_ID_USER;
+constexpr float TILT_DEADZONE = 0.12f;
+constexpr float TILT_FULL_SCALE = 5.5f;  // m/s^2; gentle roll reaches full steer
+constexpr float TILT_SMOOTHING = 0.25f;
+constexpr float TILT_EVENT_EPSILON = 0.025f;
+
+float clampf(float lo, float value, float hi) {
+    return value < lo ? lo : (value > hi ? hi : value);
+}
+
+void push_joystick_button(Engine* e, int button, bool pressed) {
+    pd::InputEvent out{};
+    out.kind = pressed ? pd::EvKind::JoystickButtonDown : pd::EvKind::JoystickButtonUp;
+    out.joystickId = 0;
+    out.joystickButton = button;
+    e->input.push_back(out);
+}
+
+void push_joystick_axis(Engine* e, float value) {
+    pd::InputEvent out{};
+    out.kind = pd::EvKind::JoystickMove;
+    out.joystickId = 0;
+    out.joystickAxis = 0;  // X axis, consumed by CRacing::Jaxis as steering
+    out.joystickPosition = clampf(-1.f, value, 1.f) * 100.f;
+    e->input.push_back(out);
+}
+
+int virtual_button_for_touch(const Engine* e, float x, float y) {
+    if (e->width <= 0 || e->height <= 0) return -1;
+    const float nx = x / static_cast<float>(e->width);
+    const float ny = y / static_cast<float>(e->height); // Android touch origin is top-left.
+
+    if (ny < 0.58f) return -1;
+    if (nx < 0.30f) return 2;             // brake: lower-left
+    if (nx > 0.70f && ny < 0.78f) return 0; // paddle: upper-right
+    if (nx > 0.70f) return 3;             // jump: lower-right
+    return -1;
+}
+
+void set_pointer_button(Engine* e, int32_t pointerId, int newButton) {
+    int oldButton = -1;
+    auto it = e->pointerButtons.find(pointerId);
+    if (it != e->pointerButtons.end()) oldButton = it->second;
+    if (oldButton == newButton) return;
+
+    if (oldButton >= 0 && oldButton < 4) {
+        if (--e->virtualButtonRefs[oldButton] == 0)
+            push_joystick_button(e, oldButton, false);
+    }
+
+    if (newButton >= 0 && newButton < 4) {
+        if (e->virtualButtonRefs[newButton]++ == 0)
+            push_joystick_button(e, newButton, true);
+        e->pointerButtons[pointerId] = newButton;
+    } else {
+        e->pointerButtons.erase(pointerId);
+    }
+}
+
+void release_all_virtual_buttons(Engine* e) {
+    e->pointerButtons.clear();
+    for (int button = 0; button < 4; button++) {
+        if (e->virtualButtonRefs[button] > 0) {
+            e->virtualButtonRefs[button] = 0;
+            push_joystick_button(e, button, false);
+        }
+    }
+}
+
+float normalize_tilt(float raw) {
+    float value = clampf(-1.f, raw / TILT_FULL_SCALE, 1.f);
+    float mag = std::fabs(value);
+    if (mag < TILT_DEADZONE) return 0.f;
+    mag = (mag - TILT_DEADZONE) / (1.f - TILT_DEADZONE);
+    return value < 0.f ? -mag : mag;
+}
+
+void setup_sensors(Engine* e) {
+    e->sensorManager = ASensorManager_getInstance();
+    if (!e->sensorManager) {
+        LOGW("ASensorManager unavailable; tilt steering disabled");
+        return;
+    }
+    e->accelerometer = ASensorManager_getDefaultSensor(e->sensorManager, ASENSOR_TYPE_ACCELEROMETER);
+    if (!e->accelerometer) {
+        LOGW("No accelerometer; tilt steering disabled");
+        return;
+    }
+    e->sensorQueue = ASensorManager_createEventQueue(
+        e->sensorManager, e->app->looper, LOOPER_ID_SENSOR, nullptr, nullptr);
+    if (!e->sensorQueue) {
+        LOGW("ASensor event queue creation failed; tilt steering disabled");
+        e->accelerometer = nullptr;
+        return;
+    }
+}
+
+void set_sensors_enabled(Engine* e, bool enabled) {
+    if (!e->sensorQueue || !e->accelerometer || e->sensorsEnabled == enabled) return;
+    if (enabled) {
+        ASensorEventQueue_enableSensor(e->sensorQueue, e->accelerometer);
+        int32_t minDelay = ASensor_getMinDelay(e->accelerometer);
+        int32_t delayUs = minDelay > 0 ? std::max(minDelay, 33333) : 33333; // about 30Hz
+        ASensorEventQueue_setEventRate(e->sensorQueue, e->accelerometer, delayUs);
+        LOGI("accelerometer enabled for tilt steering");
+    } else {
+        ASensorEventQueue_disableSensor(e->sensorQueue, e->accelerometer);
+        e->tiltAxis = 0.f;
+        e->lastTiltEvent = 999.f;
+        push_joystick_axis(e, 0.f);
+    }
+    e->sensorsEnabled = enabled;
+}
+
+void drain_sensors(Engine* e) {
+    if (!e->sensorQueue) return;
+    ASensorEvent event;
+    while (ASensorEventQueue_getEvents(e->sensorQueue, &event, 1) > 0) {
+        if (event.type != ASENSOR_TYPE_ACCELEROMETER) continue;
+
+        // In forced landscape on the target tablets, screen-left/right roll is
+        // the Android Y acceleration. Negative makes left edge down steer left.
+        float target = normalize_tilt(-event.acceleration.y);
+        e->tiltAxis += (target - e->tiltAxis) * TILT_SMOOTHING;
+        if (std::fabs(e->tiltAxis) < 0.01f) e->tiltAxis = 0.f;
+
+        if (std::fabs(e->tiltAxis - e->lastTiltEvent) >= TILT_EVENT_EPSILON) {
+            e->lastTiltEvent = e->tiltAxis;
+            push_joystick_axis(e, e->tiltAxis);
+        }
+    }
+}
 
 // mkdir -p for the directory portion of a file path.
 void make_parent_dirs(const std::string& path) {
@@ -219,7 +364,16 @@ void handle_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_TERM_WINDOW:
             egl_drop_surface(e);   // keep the context; surface returns on re-init
             break;
+        case APP_CMD_GAINED_FOCUS:
+            set_sensors_enabled(e, true);
+            break;
+        case APP_CMD_LOST_FOCUS:
+            set_sensors_enabled(e, false);
+            release_all_virtual_buttons(e);
+            break;
         case APP_CMD_DESTROY:
+            set_sensors_enabled(e, false);
+            release_all_virtual_buttons(e);
             e->closing = true;
             break;
         default:
@@ -232,15 +386,42 @@ int32_t handle_input(android_app* app, AInputEvent* ev) {
     Engine* e = static_cast<Engine*>(app->userData);
     int32_t type = AInputEvent_getType(ev);
     if (type == AINPUT_EVENT_TYPE_MOTION) {
-        int32_t action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
-        int x = static_cast<int>(AMotionEvent_getX(ev, 0));
-        int y = static_cast<int>(AMotionEvent_getY(ev, 0));
+        int32_t actionFull = AMotionEvent_getAction(ev);
+        int32_t action = actionFull & AMOTION_EVENT_ACTION_MASK;
+        std::size_t pointerIndex =
+            (actionFull & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+            AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+        if (pointerIndex >= AMotionEvent_getPointerCount(ev)) pointerIndex = 0;
+        int x = static_cast<int>(AMotionEvent_getX(ev, pointerIndex));
+        int y = static_cast<int>(AMotionEvent_getY(ev, pointerIndex));
         pd::EvKind k;
         switch (action) {
-            case AMOTION_EVENT_ACTION_DOWN:   k = pd::EvKind::PointerDown; break;
-            case AMOTION_EVENT_ACTION_MOVE:   k = pd::EvKind::PointerMove; break;
+            case AMOTION_EVENT_ACTION_DOWN:
+            case AMOTION_EVENT_ACTION_POINTER_DOWN: {
+                k = pd::EvKind::PointerDown;
+                int32_t pointerId = AMotionEvent_getPointerId(ev, pointerIndex);
+                set_pointer_button(e, pointerId, virtual_button_for_touch(e, x, y));
+                break;
+            }
+            case AMOTION_EVENT_ACTION_MOVE:
+                k = pd::EvKind::PointerMove;
+                for (std::size_t i = 0; i < AMotionEvent_getPointerCount(ev); i++) {
+                    int32_t pointerId = AMotionEvent_getPointerId(ev, i);
+                    set_pointer_button(e, pointerId, virtual_button_for_touch(
+                        e, AMotionEvent_getX(ev, i), AMotionEvent_getY(ev, i)));
+                }
+                break;
             case AMOTION_EVENT_ACTION_UP:
-            case AMOTION_EVENT_ACTION_CANCEL: k = pd::EvKind::PointerUp;   break;
+            case AMOTION_EVENT_ACTION_POINTER_UP: {
+                k = pd::EvKind::PointerUp;
+                int32_t pointerId = AMotionEvent_getPointerId(ev, pointerIndex);
+                set_pointer_button(e, pointerId, -1);
+                break;
+            }
+            case AMOTION_EVENT_ACTION_CANCEL:
+                k = pd::EvKind::PointerUp;
+                release_all_virtual_buttons(e);
+                break;
             default: return 1;
         }
         e->input.push_back({k, x, y, 0});
@@ -263,10 +444,15 @@ int32_t handle_input(android_app* app, AInputEvent* ev) {
 void pump(bool block) {
     Engine* e = &g_engine;
     int events;
-    android_poll_source* source;
-    while (ALooper_pollAll(block ? -1 : 0, nullptr, &events,
-                           reinterpret_cast<void**>(&source)) >= 0) {
-        if (source != nullptr) source->process(e->app, source);
+    void* data = nullptr;
+    int ident;
+    while ((ident = ALooper_pollAll(block ? -1 : 0, nullptr, &events, &data)) >= 0) {
+        if (ident == LOOPER_ID_SENSOR) {
+            drain_sensors(e);
+        } else if (data != nullptr) {
+            android_poll_source* source = static_cast<android_poll_source*>(data);
+            source->process(e->app, source);
+        }
         if (e->app->destroyRequested != 0) { e->closing = true; return; }
         if (block) break;   // one blocking wait is enough; caller re-checks state
     }
@@ -299,6 +485,10 @@ void PumpEvents() { pump(false); }
 
 bool ShouldClose() { return g_engine.closing || g_engine.app->destroyRequested != 0; }
 
+JavaVM* JavaVm() {
+    return g_engine.app && g_engine.app->activity ? g_engine.app->activity->vm : nullptr;
+}
+
 bool PollInput(InputEvent& out) {
     if (g_engine.input.empty()) return false;
     out = g_engine.input.front();
@@ -317,6 +507,8 @@ void android_main(android_app* app) {
     app->userData = &g_engine;
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
+    setup_sensors(&g_engine);
+    set_sensors_enabled(&g_engine, true);
 
     // Unpack game data to internal storage before the engine boots (A4).
     extract_assets(app);
@@ -329,5 +521,8 @@ void android_main(android_app* app) {
     if (pd::SurfaceReady())
         pd_engine_main();   // runs the ETR init + main loop; returns on quit
 
+    set_sensors_enabled(&g_engine, false);
+    if (g_engine.sensorQueue && g_engine.sensorManager)
+        ASensorManager_destroyEventQueue(g_engine.sensorManager, g_engine.sensorQueue);
     egl_term(&g_engine);
 }

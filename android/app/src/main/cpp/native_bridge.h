@@ -8,6 +8,8 @@
 #ifndef PD_NATIVE_BRIDGE_H
 #define PD_NATIVE_BRIDGE_H
 
+#include <jni.h>
+
 namespace pd {
 
 // True once a usable EGL surface + current GLES2 context exists.
@@ -28,13 +30,26 @@ void PumpEvents();
 // True after the activity has been asked to finish; drives winsys isOpen().
 bool ShouldClose();
 
+// NativeActivity JVM for Android platform shims that need Java services
+// (currently the A3 MediaPlayer audio backend).
+JavaVM* JavaVm();
+
 // Queued input, translated by winsys into sf::Event. Pointer coords are in
 // surface pixels; key is an Android AKEYCODE_* (only the few the menus need).
-enum class EvKind { PointerDown, PointerMove, PointerUp, KeyDown, KeyUp };
+// Joystick events are Android's virtual game controls: tilt on X, touch buttons.
+enum class EvKind {
+	PointerDown, PointerMove, PointerUp,
+	KeyDown, KeyUp,
+	JoystickMove, JoystickButtonDown, JoystickButtonUp
+};
 struct InputEvent {
 	EvKind kind;
 	int x, y;      // pointer position (Pointer*), else 0
 	int keycode;   // AKEYCODE_* (Key*), else 0
+	int joystickId;
+	int joystickButton;
+	int joystickAxis;
+	float joystickPosition; // -100..100, matching sf::Event::JoystickMoveEvent
 };
 bool PollInput(InputEvent& out);
 

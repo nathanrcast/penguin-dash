@@ -366,10 +366,66 @@ void DrawCoursePosition(const CControl *ctrl) {
 	Tex.Draw(T_MASK_OUTLINE, Winsys.resolution.width - 48, Winsys.resolution.height - 280, 1.0);
 }
 
+#ifdef __ANDROID__
+static void DrawAndroidTouchButtonRect(float left, float top, float right, float bottom) {
+	const float h = Winsys.resolution.height;
+	const float y0 = h - bottom;
+	const float y1 = h - top;
+	const float rect[] = {
+		left,  y0,
+		right, y0,
+		right, y1,
+		left,  y1
+	};
+
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, rect, nullptr, 4, false, sf::Color(255, 255, 255, 44));
+	Shader2D_DrawArrays(GL_LINE_LOOP, rect, nullptr, 4, false, sf::Color(255, 255, 255, 115));
+}
+
+static void DrawAndroidTouchLabel(float left, float top, const char* label) {
+	const float w = Winsys.resolution.width;
+	const float h = Winsys.resolution.height;
+	FT.SetColor(sf::Color(255, 255, 255, 165));
+	FT.SetSize(std::max(24u, static_cast<unsigned int>(h * 0.035f)));
+	FT.DrawString(left + w * 0.035f, top + h * 0.055f, label);
+}
+
+static void DrawAndroidTouchControls() {
+	const float w = Winsys.resolution.width;
+	const float h = Winsys.resolution.height;
+	if (w <= 0 || h <= 0) return;
+
+	const float leftX = 0.f;
+	const float leftR = w * 0.30f;
+	const float rightL = w * 0.70f;
+	const float rightR = w;
+	const float top = h * 0.58f;
+	const float split = h * 0.78f;
+	const float bottom = h;
+
+	Shader2D_Begin(w, h);
+	DrawAndroidTouchButtonRect(leftX, top, leftR, bottom);
+	DrawAndroidTouchButtonRect(rightL, top, rightR, split);
+	DrawAndroidTouchButtonRect(rightL, split, rightR, bottom);
+	Shader2D_End();
+
+	Winsys.beginSFML();
+	DrawAndroidTouchLabel(leftX, top, "BRAKE");
+	DrawAndroidTouchLabel(rightL, top, "PADDLE");
+	DrawAndroidTouchLabel(rightL, split, "JUMP");
+	Winsys.endSFML();
+}
+#endif
+
 // -------------------------------------------------------
 void DrawHud(const CControl *ctrl) {
-	if (!param.show_hud)
+	if (!param.show_hud) {
+#ifdef __ANDROID__
+		Setup2dScene();
+		DrawAndroidTouchControls();
+#endif
 		return;
+	}
 
 	double speed = ctrl->cvel.Length();
 	Setup2dScene();
@@ -404,4 +460,7 @@ void DrawHud(const CControl *ctrl) {
 	DrawFps();
 	DrawCoursePosition(ctrl);
 	DrawWind(Wind.Angle(), Wind.Speed(), ctrl);
+#ifdef __ANDROID__
+	DrawAndroidTouchControls();
+#endif
 }
