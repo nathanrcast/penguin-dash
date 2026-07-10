@@ -14,7 +14,7 @@ keystore signing, `assembleRelease`, sideload).
 
 ## Port strategy
 
-1. **Desktop baseline:** ✅ **DONE 2026-07-01.** Built on `.13` with the pre-generated `./configure`
+1. **Desktop baseline:** ✅ **DONE 2026-07-01.** Built on the dev desktop with the pre-generated `./configure`
    (no autotools needed) + `make` — clean, **zero errors/warnings**. Only added dep was `libsfml-dev`
    (GL/GLU dev already present). Notably compiled + linked against system **SFML 2.6.1** despite the
    source targeting 2.5 — **no API breakage** (de-risks the SFML-Android step). Binary: `src/etr` (15M),
@@ -29,8 +29,8 @@ keystore signing, `assembleRelease`, sideload).
    still call GLES2-nonexistent `gl*d` symbols — prune when the Android link surfaces them.
 3. **SFML on Android:** SFML 2.6 has an official Android/NDK backend — stand up the SFML Android
    project template (Gradle + NDK), reuse OneCube keystore/signing.
-   **Toolchain probe 2026-07-01 (`.13`):** NDK 26.3 + 27.3, SDK platform-34 / build-tools 34.0.0, and
-   `~/keystores/onecube-android-release.jks` are present. OneCube ships a reusable Gradle template at
+   **Toolchain probe 2026-07-01:** NDK 26.3 + 27.3, SDK platform-34 / build-tools 34.0.0, and
+   the shared release keystore are present. OneCube ships a reusable Gradle template at
    `assaultcube/source/android/` (native side is SDL, not SFML — Gradle/manifest/signing reusable, glue
    is not). **Gating unknown: SFML for Android is not packaged** — only desktop `amd64` 2.6.1 is
    installed; the Android backend must be cross-compiled per-ABI from source (+ Android extlibs), OR
@@ -38,7 +38,7 @@ keystore signing, `assembleRelease`, sideload).
 4. **Controls:** steering via **device tilt (accelerometer)** with on-screen touch fallback
    (brake/jump/paddle buttons). Tune for 6–10 — forgiving, simple.
 5. **Assets:** package `data/` (courses, models, textures, music) into the APK/OBB.
-6. **Sign & sideload:** release-sign with the existing keystore (`~/keystores/`), `assembleRelease`,
+6. **Sign & sideload:** release-sign with the existing shared keystore, `assembleRelease`,
    `adb install -r` to the kids' tablets.
 
 ## Risks / open questions

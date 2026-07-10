@@ -12,10 +12,20 @@ no public git, so there is no upstream commit history). Play-tested + approved 2
 
 ## Status
 
-**Porting.** See [`docs/port_plan.md`](docs/port_plan.md). Desktop build is C++/**autotools** +
-**SFML 2.5** + **OpenGL**. Main port challenge: the renderer uses **legacy immediate-mode GL**
-(`glBegin`/`glVertex`, ~76 call sites) which does not exist in GLES — it needs a GLES2 rewrite. A
-play-tested Flathub build (`net.sourceforge.ExtremeTuxRacer` 0.8.4) runs on `.13`.
+**Playable on Android; tuning.** The legacy immediate-mode GL renderer has been rewritten on
+**GLES2 shaders** (desktop and Android share the code path), and an Android app under `android/`
+hosts the engine natively (`NativeActivity` + EGL, no Java activity): menus, full races, HUD, and
+touch + tilt controls run on device; MediaPlayer-backed audio is wired and awaiting on-device
+verification. Remaining: sideload + audio/control tuning pass. History: [`docs/port_plan.md`](docs/port_plan.md) →
+[`docs/gles_render_audit.md`](docs/gles_render_audit.md) →
+[`docs/android_port_plan.md`](docs/android_port_plan.md).
+
+## Building
+
+- **Desktop (Linux):** autotools + SFML 2.5/2.6 + OpenGL — `./configure && make`, binary at `src/etr`.
+- **Android:** `cd android && ./gradlew :app:assembleRelease` (needs NDK 26+, SDK platform-34, a full
+  JDK 21; release signing reads a gitignored `android/keystore.properties`, else falls back to debug
+  signing). Game data under `data/` is packaged into the APK and extracted on first run.
 
 ## Credits & license
 

@@ -72,17 +72,17 @@ front-loaded into getting the shaders + software matrix stack right (M0–M2 bel
   helpers; upload MVP on draw.
 - **VBO-ify** the existing array paths behind the same abstraction.
 
-## Milestones (desktop-first — validate on `.13` before Android)
+## Milestones (desktop-first — validate on desktop before Android)
 
 Develop against a **GL 2.1 / GLES2-compatible subset** on desktop (SFML currently requests a GL 1.2
-context in `winsys.cpp:101/103` — bump it), so each milestone is testable on `.13` before the Android
+context in `winsys.cpp:101/103` — bump it), so each milestone is testable on desktop before the Android
 context switch.
 
 - **M0 – Scaffolding:** ✅ **DONE 2026-07-01** (commit `bebff48`). `glshader.{h,cpp}` (GLSL program
   wrapper + GL2.0 entry points loaded via `sf::Context::getFunction` + core 2D/3D shaders) and
   `glmatrix.{h,cpp}` (Ortho/Perspective/LookAt builders + software matrix stack, column-major to match
   `TMatrix`). `InitCoreShaders()` called from `main` after GL init; GL context bumped 1.2→2.1. Shaders
-  are compiled+linked but **not bound** → zero visual change. Verified on `.13`: build clean (no
+  are compiled+linked but **not bound** → zero visual change. Verified on desktop: build clean (no
   warnings), and a windowed smoke run logged *"core 2D/3D shaders compiled + linked OK"* on the live
   GL context. (`Makefile.in` hand-updated alongside `Makefile.am` — no autotools installed.)
 - **M1 – 2D pipeline:** ✅ **DONE 2026-07-01** (part 1 `266df4e`: `TTexture::Draw*`; part 2 `bbcad5a`:
