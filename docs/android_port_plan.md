@@ -137,7 +137,9 @@ a JRE is not enough for Gradle/AGP; point `JAVA_HOME` at it). Release signing re
 
 - Tilt-steer feel pass — needs a human physically tilting the tablet (sensor path ran live without
   crashing, but steering feel is untested).
-- Rebrand art assets: the in-game logo still says "Extreme Tux Racer" (`data/textures/etr_logo*`).
+- ~~Rebrand art assets~~ DONE 2026-07-09: `menu_title.png` + `splash_1.png` replaced with a
+  Penguin Dash wordmark (generator: `tools/make_logo.py`, uses the game's `pc_20.ttf`);
+  versionCode bumped to 2 so installed devices re-extract assets. Device-verified.
 - Install on the remaining kids' tablets.
 
 ## Risks
