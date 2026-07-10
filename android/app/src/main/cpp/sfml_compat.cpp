@@ -5,7 +5,7 @@
 // then made real one at a time:
 //   A1c  Window/Keyboard/Event  -> the native_main EGL shim + AInputEvent
 //   A1d  Image/Texture/Font/Text/Sprite/RenderTarget -> stb_image/stb_truetype + Shader2D
-//   A3   SoundBuffer/Sound/Music -> Android MediaPlayer (.wav/.ogg)
+//   A3   SoundBuffer/Sound -> SoundPool (pre-decoded SFX); Music -> MediaPlayer (.ogg)
 // Grep TODO(A1c/A1d/A3) for what remains to implement.
 
 #include <SFML/Graphics.hpp>
@@ -16,8 +16,10 @@
 #include <android/log.h>
 #include <android/keycodes.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <vector>
 
@@ -152,6 +154,39 @@ bool AudioFileExists(const std::string& filename) {
     if (!f) return false;
     std::fclose(f);
     return true;
+}
+
+// PCM WAV duration from the RIFF header (fmt byte rate + data chunk size).
+// SoundPool has no is-playing query, so Sound::getStatus tracks one-shot
+// playback natively as startedAt + duration; 0 on parse failure.
+float WavDurationSeconds(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return 0.f;
+    unsigned char h[12];
+    if (std::fread(h, 1, 12, f) != 12 ||
+        std::memcmp(h, "RIFF", 4) != 0 || std::memcmp(h + 8, "WAVE", 4) != 0) {
+        std::fclose(f);
+        return 0.f;
+    }
+    unsigned byteRate = 0, dataSize = 0;
+    unsigned char ch[8];
+    while (std::fread(ch, 1, 8, f) == 8) {
+        unsigned sz = ch[4] | (ch[5] << 8) | (ch[6] << 16) | ((unsigned)ch[7] << 24);
+        if (std::memcmp(ch, "fmt ", 4) == 0 && sz >= 16) {
+            unsigned char fmt[16];
+            if (std::fread(fmt, 1, 16, f) != 16) break;
+            byteRate = fmt[8] | (fmt[9] << 8) | (fmt[10] << 16) | ((unsigned)fmt[11] << 24);
+            if (sz > 16) std::fseek(f, sz - 16, SEEK_CUR);
+        } else if (std::memcmp(ch, "data", 4) == 0) {
+            dataSize = sz;
+            break;
+        } else {
+            std::fseek(f, sz + (sz & 1), SEEK_CUR);
+        }
+    }
+    std::fclose(f);
+    if (!byteRate || !dataSize) return 0.f;
+    return static_cast<float>(dataSize) / static_cast<float>(byteRate);
 }
 
 JNIEnv* GetJniEnv() {
@@ -298,16 +333,104 @@ struct JavaMediaPlayer {
     }
 };
 
+// ---- SoundPool-backed SFX (perf review P1) ----
+// MediaPlayer's synchronous prepare() per play() ran a blocking codec init on
+// the render thread (multi-frame hitch on every herring pickup / terrain
+// change). SoundPool decodes each .wav ONCE at load time on a background
+// thread; play() is a single cached-jmethodID JNI call into pre-decoded PCM.
+struct SoundPoolBackend {
+    jobject pool = nullptr;   // global ref, app lifetime
+    jmethodID midLoad = nullptr, midPlay = nullptr, midStop = nullptr, midSetVolume = nullptr;
+    bool triedInit = false;
+
+    bool init() {
+        if (pool) return true;
+        if (triedInit) return false;
+        triedInit = true;
+        JNIEnv* env = GetJniEnv();
+        if (!env) return false;
+        jclass cls = env->FindClass("android/media/SoundPool");
+        if (!cls || ClearJavaException(env, "FindClass(SoundPool)")) return false;
+        // The (maxStreams, streamType, srcQuality) constructor is deprecated but
+        // present on every API level and far simpler than the Builder via JNI.
+        jmethodID ctor = env->GetMethodID(cls, "<init>", "(III)V");
+        midLoad      = env->GetMethodID(cls, "load", "(Ljava/lang/String;I)I");
+        midPlay      = env->GetMethodID(cls, "play", "(IFFIIF)I");
+        midStop      = env->GetMethodID(cls, "stop", "(I)V");
+        midSetVolume = env->GetMethodID(cls, "setVolume", "(IFF)V");
+        if (!ctor || !midLoad || !midPlay || !midStop || !midSetVolume ||
+            ClearJavaException(env, "SoundPool methods")) {
+            env->DeleteLocalRef(cls);
+            return false;
+        }
+        jobject local = env->NewObject(cls, ctor, 8, 3 /*AudioManager.STREAM_MUSIC*/, 0);
+        env->DeleteLocalRef(cls);
+        if (!local || ClearJavaException(env, "new SoundPool")) return false;
+        pool = env->NewGlobalRef(local);
+        env->DeleteLocalRef(local);
+        return pool != nullptr;
+    }
+
+    // Kicks off an async decode; the returned sample id is usable once decoding
+    // finishes (play() on a not-yet-ready sample returns stream id 0 = no-op).
+    int load(const std::string& path) {
+        if (!init()) return 0;
+        JNIEnv* env = GetJniEnv();
+        if (!env) return 0;
+        jstring jpath = env->NewStringUTF(path.c_str());
+        jint id = env->CallIntMethod(pool, midLoad, jpath, 1);
+        env->DeleteLocalRef(jpath);
+        return ClearJavaException(env, "SoundPool.load") ? 0 : id;
+    }
+
+    int play(int soundId, float gain, bool loop) {
+        if (!pool || soundId <= 0) return 0;
+        JNIEnv* env = GetJniEnv();
+        if (!env) return 0;
+        jint stream = env->CallIntMethod(pool, midPlay, (jint)soundId,
+                                         (jfloat)gain, (jfloat)gain,
+                                         (jint)1, (jint)(loop ? -1 : 0), (jfloat)1.0f);
+        return ClearJavaException(env, "SoundPool.play") ? 0 : stream;
+    }
+
+    void stop(int streamId) {
+        if (!pool || streamId == 0) return;
+        JNIEnv* env = GetJniEnv();
+        if (!env) return;
+        env->CallVoidMethod(pool, midStop, (jint)streamId);
+        ClearJavaException(env, "SoundPool.stop");
+    }
+
+    void setVolume(int streamId, float gain) {
+        if (!pool || streamId == 0) return;
+        JNIEnv* env = GetJniEnv();
+        if (!env) return;
+        env->CallVoidMethod(pool, midSetVolume, (jint)streamId, (jfloat)gain, (jfloat)gain);
+        ClearJavaException(env, "SoundPool.setVolume");
+    }
+};
+SoundPoolBackend g_soundPool;
+
+float GainFromVolume(float volume) {
+    return std::max(0.f, std::min(volume / 100.f, 1.f));
+}
+
 struct AudioFile {
     std::string filename;
     bool exists = false;
+    int soundId = 0;          // SoundPool sample id (0 = not loaded)
+    float durationSec = 0.f;  // one-shot length for native play-state tracking
 };
 
 struct SoundData {
     std::string filename;
     bool exists = false;
     bool missingLogged = false;
-    JavaMediaPlayer player;
+    int soundId = 0;
+    float durationSec = 0.f;
+    int streamId = 0;         // last started SoundPool stream (0 = none)
+    bool looping = false;
+    std::chrono::steady_clock::time_point startedAt{};
 };
 
 struct MusicData {
@@ -752,11 +875,14 @@ void RenderTexture::setSmooth(bool) {}
 Vector2u RenderTexture::getSize() const { return Vector2u(m_w, m_h); }
 bool RenderTexture::setActive(bool) { return true; }
 
-// ---- Audio (A3: Android MediaPlayer backend) ----
+// ---- Audio ----
+// SFX (SoundBuffer/Sound): SoundPool — pre-decoded at load, hitch-free play,
+// zero per-frame JNI (play-state is tracked natively; the engine polls
+// getStatus every frame for the looping terrain sound and to rate-limit
+// repeat triggers like tree_hit).
+// Music: Android MediaPlayer via JNI (streamed .ogg, state-transition only).
 // load/open still report success if an audio file is absent so the engine's
-// music/theme bookkeeping stays valid. When the packaged .wav/.ogg assets are
-// present in the extracted data dir, playback is delegated to Android's native
-// MediaPlayer via JNI.
+// music/theme bookkeeping stays valid.
 SoundBuffer::SoundBuffer() : m_impl(nullptr) {}
 SoundBuffer::~SoundBuffer() { delete static_cast<AudioFile*>(m_impl); }
 bool SoundBuffer::loadFromFile(const std::string& filename) {
@@ -764,14 +890,23 @@ bool SoundBuffer::loadFromFile(const std::string& filename) {
     AudioFile* file = new AudioFile();
     file->filename = filename;
     file->exists = AudioFileExists(filename);
-    if (!file->exists)
+    if (file->exists) {
+        file->soundId = g_soundPool.load(filename);   // async decode, no hitch
+        file->durationSec = WavDurationSeconds(filename);
+        if (file->durationSec <= 0.f) file->durationSec = 0.5f;
+    } else {
         LOGW("sound file missing, keeping silent placeholder: %s", filename.c_str());
+    }
     m_impl = file;
     return true;
 }
 
 Sound::Sound() : m_buffer(nullptr), m_impl(new SoundData()) {}
-Sound::~Sound() { delete static_cast<SoundData*>(m_impl); }
+Sound::~Sound() {
+    SoundData* data = static_cast<SoundData*>(m_impl);
+    if (data && data->looping) g_soundPool.stop(data->streamId);
+    delete data;
+}
 void Sound::setBuffer(const SoundBuffer& b) {
     m_buffer = &b;
     SoundData* data = static_cast<SoundData*>(m_impl);
@@ -779,12 +914,17 @@ void Sound::setBuffer(const SoundBuffer& b) {
     if (!data || !file) return;
     data->filename = file->filename;
     data->exists = file->exists;
+    data->soundId = file->soundId;
+    data->durationSec = file->durationSec;
     data->missingLogged = false;
+    data->streamId = 0;
+    data->looping = false;
 }
 void Sound::setVolume(float volume) {
     SoundSource::setVolume(volume);
     SoundData* data = static_cast<SoundData*>(m_impl);
-    if (data) data->player.setVolume(volume);
+    if (data && data->streamId)
+        g_soundPool.setVolume(data->streamId, GainFromVolume(volume));
 }
 void Sound::play() {
     SoundData* data = static_cast<SoundData*>(m_impl);
@@ -797,20 +937,31 @@ void Sound::play() {
         m_status = Stopped;
         return;
     }
-    if (data->player.isPlaying()) { m_status = Playing; return; }
-    if (!data->player.prepareFile(data->filename)) { m_status = Stopped; return; }
-    data->player.setLooping(m_loop);
-    data->player.setVolume(m_volume);
-    m_status = data->player.start() ? Playing : Stopped;
+    if (m_loop && data->looping && data->streamId) { m_status = Playing; return; }
+    int stream = g_soundPool.play(data->soundId, GainFromVolume(m_volume), m_loop);
+    if (stream == 0) { m_status = Stopped; return; }  // sample still decoding; caller retries
+    data->streamId = stream;
+    data->looping = m_loop;
+    data->startedAt = std::chrono::steady_clock::now();
+    m_status = Playing;
 }
 void Sound::stop() {
     SoundData* data = static_cast<SoundData*>(m_impl);
-    if (data) data->player.stop();
+    if (data && data->streamId) {
+        g_soundPool.stop(data->streamId);
+        data->streamId = 0;
+        data->looping = false;
+    }
     m_status = Stopped;
 }
 SoundSource::Status Sound::getStatus() const {
-    SoundData* data = static_cast<SoundData*>(m_impl);
-    return (data && data->player.isPlaying()) ? Playing : Stopped;
+    // Native tracking, no JNI: SoundPool cannot be queried for playback state.
+    const SoundData* data = static_cast<const SoundData*>(m_impl);
+    if (!data || data->streamId == 0) return Stopped;
+    if (data->looping) return Playing;
+    float elapsed = std::chrono::duration<float>(
+        std::chrono::steady_clock::now() - data->startedAt).count();
+    return elapsed < data->durationSec ? Playing : Stopped;
 }
 
 Music::Music() : m_impl(nullptr) {}

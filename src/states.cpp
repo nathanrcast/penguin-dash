@@ -22,6 +22,7 @@ GNU General Public License for more details.
 #include "states.h"
 #include "ogl.h"
 #include "winsys.h"
+#include <algorithm>
 
 State::Manager State::manager(Winsys);
 
@@ -118,7 +119,9 @@ void State::Manager::PollEvent() {
 void State::Manager::CallLoopFunction() {
 	check_gl_error();
 
-	g_game.time_step = std::max(0.0001f, timer.getElapsedTime().asSeconds());
+	// Clamp the upper bound too: after a hitch (asset load, GC, audio init) the
+	// physics would otherwise integrate the whole gap in one step — a lurch.
+	g_game.time_step = std::max(0.0001f, std::min(timer.getElapsedTime().asSeconds(), 0.05f));
 	timer.restart();
 	current->Loop(g_game.time_step);
 }

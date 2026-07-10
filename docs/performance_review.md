@@ -9,13 +9,20 @@ frame cost** (low average FPS; under vsync this oscillates 60↔30 and also read
 
 | # | Fix | Type | Effort | Expected win |
 |---|-----|------|--------|--------------|
-| P1 | SFX off MediaPlayer → SoundPool (or pre-created players); kill per-frame JNI | hitch | S–M | removes pickup/terrain-change spikes |
+| P1 | ✅ SFX off MediaPlayer → SoundPool; kill per-frame JNI | hitch | S–M | removes pickup/terrain-change spikes |
 | P2 | Batch snowflakes/curtains/particles into one draw per group | constant | S | −500…−3000 draw calls/frame |
-| P3 | Fix curtain double-draw (upstream bug) | constant | XS | halves curtain fill cost |
+| P3 | ✅ Fix curtain double-draw (upstream bug) | constant | XS | halves curtain fill cost |
 | P4 | Cheapen per-tree draws (static index buffer, skip normal-matrix, hoist rot) | constant | S | big CPU win on tree-heavy courses |
 | P5 | Terrain: static VBO + terrain-id attrib (or drop multipass on Android) | constant | M–L | removes MB-scale per-frame copies |
 | P6 | Optional render-scale (smaller EGL surface, HW upscale) | constant | S | ~2× fill headroom for old devices |
-| P7 | Clamp `time_step` max | playability | XS | hitches stop cascading into physics jumps |
+| P7 | ✅ Clamp `time_step` max | playability | XS | hitches stop cascading into physics jumps |
+
+**Stage 1 (P1+P3+P7) SHIPPED 2026-07-10**, device-verified on the A9+ (race runs, SoundPool
+sessions active, no missing-SFX warnings, no crash). Implementation notes: SFX playback state is
+tracked natively (SoundPool has no is-playing query) — looping streams by flag, one-shots by
+load-time WAV-header duration — preserving the `getStatus()==Playing` guard that rate-limits
+`tree_hit` retriggering. Music stays on MediaPlayer (state-transition only). Remaining human
+check: confirm by ear that pickups no longer stutter mid-race.
 
 ## Hitch sources (frame spikes)
 

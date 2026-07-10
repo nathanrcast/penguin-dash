@@ -849,7 +849,8 @@ void CCurtain::Update(float timestep, const CControl *ctrl) {
 	for (std::size_t i=0; i<curtains.size(); i++) {
 		curtains[i].Update(timestep, drift, ctrl);
 	}
-	Draw();
+	// Drawing happens in DrawSnow(); drawing here as well rendered every
+	// curtain twice per frame (expensive near-camera alpha fill).
 }
 
 void CCurtain::Reset() {
