@@ -42,6 +42,7 @@ Then edit the below functions:
 #include "game_config.h"
 #include "spx.h"
 #include "translation.h"
+#include <algorithm>
 #include <sstream>
 #include <sys/stat.h>
 #ifdef __ANDROID__
@@ -62,6 +63,7 @@ void LoadConfigFile() {
 		param.fullscreen = SPBoolN(*line, "fullscreen", false);
 		param.res_type = SPIntN(*line, "res_type", 0);
 		param.perf_level = SPIntN(*line, "detail_level", 3);
+		param.render_scale = std::max(50, std::min(SPIntN(*line, "render_scale", 100), 100));
 		param.language = Trans.GetLangIdx(SPStrN(*line, "language", "EN_en"));
 		param.sound_volume = SPIntN(*line, "sound_volume", 90);
 		param.music_volume = SPIntN(*line, "music_volume", 20);
@@ -92,6 +94,7 @@ void SetConfigDefaults() {
 	param.fullscreen = true;
 	param.res_type = 0; // 0=auto / 1=800x600 / 2=1024x768 ...
 	param.perf_level = 3;	// detail level
+	param.render_scale = 100;
 	param.language = std::string::npos; // If language is set to npos, ETR will try to load default system language
 	param.sound_volume = 90;
 	param.music_volume = 20;
@@ -155,6 +158,12 @@ void SaveConfigFile() {
 	AddComment(liste, "Level of details [1...4]");
 	AddComment(liste, "1 = best performance, 4 = best appearance");
 	AddItem(liste, "detail_level", param.perf_level);
+	liste.Add();
+
+	AddComment(liste, "Render scale percent [50...100] (Android only)");
+	AddComment(liste, "Renders 3D at a smaller surface and lets the hardware upscale;");
+	AddComment(liste, "big framerate win on weak GPUs. Applied at the next app launch.");
+	AddItem(liste, "render_scale", param.render_scale);
 	liste.Add();
 
 	AddComment(liste, "Language code");

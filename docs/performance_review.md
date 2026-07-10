@@ -14,7 +14,7 @@ frame cost** (low average FPS; under vsync this oscillates 60↔30 and also read
 | P3 | ✅ Fix curtain double-draw (upstream bug) | constant | XS | halves curtain fill cost |
 | P4 | ✅ Cheapen per-tree draws (static index buffer, skip normal-matrix, hoist rot) | constant | S | big CPU win on tree-heavy courses |
 | P5 | ✅ Terrain: static VBO + terrain-id attrib | constant | M–L | removes MB-scale per-frame copies |
-| P6 | Optional render-scale (smaller EGL surface, HW upscale) | constant | S | ~2× fill headroom for old devices |
+| P6 | ✅ Optional render-scale (smaller EGL surface, HW upscale) | constant | S | ~2× fill headroom for old devices |
 | P7 | ✅ Clamp `time_step` max | playability | XS | hitches stop cascading into physics jumps |
 
 **Stage 1 (P1+P3+P7) SHIPPED 2026-07-10**, device-verified on the A9+ (race runs, SoundPool
@@ -23,6 +23,16 @@ tracked natively (SoundPool has no is-playing query) — looping streams by flag
 load-time WAV-header duration — preserving the `getStatus()==Playing` guard that rate-limits
 `tree_hit` retriggering. Music stays on MediaPlayer (state-transition only). Remaining human
 check: confirm by ear that pickups no longer stutter mid-race.
+
+**Stage 4 (P6) SHIPPED 2026-07-10**, device-verified on the A9+ end-to-end (UI → options.txt →
+next-boot 960×600 surface hardware-upscaled to the 1920×1200 window → tap-navigation and a race at
+50% → restored to 100%). Implementation: `param.render_scale` (50/67/75/100, default 100) with an
+Android-only "Render scale (restart)" row on the Configuration screen; the native host parses
+`options.txt` before the first EGL surface and applies it via `ANativeWindow_setBuffersGeometry`
+(the compositor upscales for free). Touch coordinates arrive in window pixels and are rescaled to
+render-buffer pixels in `handle_input`; `egl_check_resize` compares the raw window size (the
+buffer is intentionally smaller). Applied at next launch — live surface swap not worth the
+lifecycle risk. **Set 67–75% on the weaker/older tablets; the A9+ stays at 100%.**
 
 **Stage 3 (P5) SHIPPED 2026-07-10**, device-verified on the A9+ against a parent-build A/B at the
 same start-gate frame (identical: snow grain, shaded banks, ice field with edge blending; full

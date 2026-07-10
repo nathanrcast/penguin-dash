@@ -37,8 +37,10 @@ struct Engine {
     EGLContext context = EGL_NO_CONTEXT;
     EGLConfig config = nullptr;
     EGLint format = 0;     // native visual id for the chosen config
-    int32_t width = 0;
+    int32_t width = 0;     // render buffer size (window * render scale)
     int32_t height = 0;
+    int32_t windowW = 0;   // raw native window size (touch coords arrive in this space)
+    int32_t windowH = 0;
     bool running = false;  // true once we hold a usable GL surface
     bool closing = false;  // activity asked to finish
     std::deque<pd::InputEvent> input;  // filled on the glue thread, drained by the engine
@@ -57,6 +59,27 @@ Engine g_engine;
 // Filesystem roots (A4). Resolved once in extract_assets().
 std::string g_dataDir;     // <internalDataPath>/etr — the ETR data root
 std::string g_configDir;   // <internalDataPath>     — writable (options/players)
+
+// Render scale percent (P6): the 3D surface renders at window*scale and the
+// compositor upscales for free — the big fill-rate lever on weak GPUs. Set on
+// the in-game Configuration screen (saved to options.txt), read here at boot.
+int g_renderScalePct = 100;
+
+int read_render_scale(const std::string& configDir) {
+    FILE* f = std::fopen((configDir + "/options.txt").c_str(), "rb");
+    if (!f) return 100;
+    std::string txt;
+    char buf[4096];
+    std::size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) txt.append(buf, n);
+    std::fclose(f);
+    std::size_t pos = txt.find("[render_scale]");
+    if (pos == std::string::npos) return 100;
+    int v = std::atoi(txt.c_str() + pos + sizeof("[render_scale]") - 1);
+    if (v < 50) v = 50;
+    if (v > 100) v = 100;
+    return v;
+}
 
 constexpr int LOOPER_ID_SENSOR = LOOPER_ID_USER;
 constexpr float TILT_DEADZONE = 0.12f;
@@ -265,7 +288,17 @@ void extract_assets(android_app* app) {
 // resized/recreated (rotation, background, or the pre-layout 1x1 race on some
 // devices where APP_CMD_INIT_WINDOW fires before the view is laid out).
 bool egl_create_surface(Engine* e) {
-    ANativeWindow_setBuffersGeometry(e->app->window, 0, 0, e->format);
+    e->windowW = ANativeWindow_getWidth(e->app->window);
+    e->windowH = ANativeWindow_getHeight(e->app->window);
+    if (g_renderScalePct < 100 && e->windowW > 1 && e->windowH > 1) {
+        // Render smaller; the compositor's hardware scaler stretches to the
+        // window for free (P6). Even-align to keep the scaler happy.
+        int32_t bw = (e->windowW * g_renderScalePct / 100) & ~1;
+        int32_t bh = (e->windowH * g_renderScalePct / 100) & ~1;
+        ANativeWindow_setBuffersGeometry(e->app->window, bw, bh, e->format);
+    } else {
+        ANativeWindow_setBuffersGeometry(e->app->window, 0, 0, e->format);
+    }
     e->surface = eglCreateWindowSurface(e->display, e->config, e->app->window, nullptr);
     if (e->surface == EGL_NO_SURFACE) { LOGW("eglCreateWindowSurface failed"); return false; }
     if (!eglMakeCurrent(e->display, e->surface, e->surface, e->context)) {
@@ -274,7 +307,9 @@ bool egl_create_surface(Engine* e) {
     }
     eglQuerySurface(e->display, e->surface, EGL_WIDTH, &e->width);
     eglQuerySurface(e->display, e->surface, EGL_HEIGHT, &e->height);
-    LOGI("EGL surface: %dx%d, GL_VERSION=%s", e->width, e->height, glGetString(GL_VERSION));
+    LOGI("EGL surface: %dx%d (window %dx%d, render scale %d%%), GL_VERSION=%s",
+         e->width, e->height, e->windowW, e->windowH, g_renderScalePct,
+         glGetString(GL_VERSION));
     return true;
 }
 
@@ -337,9 +372,11 @@ void egl_drop_surface(Engine* e) {
 // (handles the 1x1-at-init race without waiting on a resize event).
 void egl_check_resize(Engine* e) {
     if (!e->running || e->app->window == nullptr) return;
+    // Compare the raw window size (the render buffer is window * render scale,
+    // so comparing against e->width would recreate every frame when scaled).
     int32_t w = ANativeWindow_getWidth(e->app->window);
     int32_t h = ANativeWindow_getHeight(e->app->window);
-    if (w == e->width && h == e->height) return;
+    if (w == e->windowW && h == e->windowH) return;
     egl_drop_surface(e);
     egl_create_surface(e);
     e->running = (e->surface != EGL_NO_SURFACE);
@@ -392,8 +429,12 @@ int32_t handle_input(android_app* app, AInputEvent* ev) {
             (actionFull & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
             AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
         if (pointerIndex >= AMotionEvent_getPointerCount(ev)) pointerIndex = 0;
-        int x = static_cast<int>(AMotionEvent_getX(ev, pointerIndex));
-        int y = static_cast<int>(AMotionEvent_getY(ev, pointerIndex));
+        // Touch arrives in window pixels; the engine lives in render-buffer
+        // pixels (window * render scale) — rescale so taps land where drawn.
+        float sx = (e->windowW > 0) ? (float)e->width / e->windowW : 1.f;
+        float sy = (e->windowH > 0) ? (float)e->height / e->windowH : 1.f;
+        int x = static_cast<int>(AMotionEvent_getX(ev, pointerIndex) * sx);
+        int y = static_cast<int>(AMotionEvent_getY(ev, pointerIndex) * sy);
         pd::EvKind k;
         switch (action) {
             case AMOTION_EVENT_ACTION_DOWN:
@@ -412,7 +453,7 @@ int32_t handle_input(android_app* app, AInputEvent* ev) {
                 for (std::size_t i = 0; i < AMotionEvent_getPointerCount(ev); i++) {
                     int32_t pointerId = AMotionEvent_getPointerId(ev, i);
                     set_pointer_button(e, pointerId, virtual_button_for_touch(
-                        e, AMotionEvent_getX(ev, i), AMotionEvent_getY(ev, i)));
+                        e, AMotionEvent_getX(ev, i) * sx, AMotionEvent_getY(ev, i) * sy));
                 }
                 break;
             case AMOTION_EVENT_ACTION_UP:
@@ -516,6 +557,11 @@ void android_main(android_app* app) {
 
     // Unpack game data to internal storage before the engine boots (A4).
     extract_assets(app);
+
+    // Render scale must be known before the first EGL surface exists (P6).
+    g_renderScalePct = read_render_scale(g_configDir);
+    if (g_renderScalePct < 100)
+        LOGI("render scale %d%% (from options.txt)", g_renderScalePct);
 
     // Wait for the first usable surface before booting the engine (it needs a
     // live GLES2 context for shader/texture init).

@@ -41,6 +41,7 @@ Then edit the below functions:
 
 #include "config_screen.h"
 #include "spx.h"
+#include <cstdlib>
 #include "translation.h"
 #include "particles.h"
 #include "audio.h"
@@ -59,7 +60,21 @@ static TUpDown* mus_vol;
 static TUpDown* sound_vol;
 static TUpDown* detail_level;
 static TWidget* textbuttons[2];
+#ifdef __ANDROID__
+// Render-scale (P6): 3D surface scale, hardware-upscaled. Applied at next launch.
+static TUpDown* render_scale;
+static TLabel* descriptions[6];
+static const int scale_values[4] = { 50, 67, 75, 100 };
+static int ScaleIndexFromValue(int value) {
+	int best = 3;
+	for (int i = 0; i < 4; i++)
+		if (std::abs(scale_values[i] - value) < std::abs(scale_values[best] - value))
+			best = i;
+	return best;
+}
+#else
 static TLabel* descriptions[5];
+#endif
 
 void SetConfig() {
 	if (mus_vol->GetValue() != param.music_volume ||
@@ -67,6 +82,9 @@ void SetConfig() {
 	        language->GetValue() != param.language ||
 	        resolution->GetValue() != param.res_type ||
 	        detail_level->GetValue() != param.perf_level ||
+#ifdef __ANDROID__
+	        scale_values[render_scale->GetValue()] != param.render_scale ||
+#endif
 	        fullscreen->checked != param.fullscreen) {
 
 		if (resolution->GetValue() != param.res_type || fullscreen->checked != param.fullscreen) {
@@ -83,6 +101,10 @@ void SetConfig() {
 		Music.SetVolume(param.music_volume);
 		param.sound_volume = sound_vol->GetValue();
 		param.perf_level = detail_level->GetValue();
+#ifdef __ANDROID__
+		// Native host reads this from options.txt at boot; applies next launch.
+		param.render_scale = scale_values[render_scale->GetValue()];
+#endif
 		FT.SetFontFromSettings();
 		if (param.language != language->GetValue()) {
 			param.language = language->GetValue();
@@ -161,6 +183,9 @@ void CGameConfig::Enter() {
 	sound_vol = AddUpDown(rightpos, area.top+dd*3, 0, 100, param.sound_volume, 2, true);
 	language = AddUpDown(rightpos, area.top+dd*4, 0, (int)Trans.languages.size() - 1, (int)param.language);
 	detail_level = AddUpDown(rightpos, area.top+dd*5, 1, 4, param.perf_level, 2, true);
+#ifdef __ANDROID__
+	render_scale = AddUpDown(rightpos, area.top+dd*6, 0, 3, ScaleIndexFromValue(param.render_scale), 2, true);
+#endif
 
 	textbuttons[0] = AddTextButton(Trans.Text(28), area.left+50, AutoYPosN(80), siz);
 	float len = FT.GetTextWidth(Trans.Text(8));
@@ -171,6 +196,10 @@ void CGameConfig::Enter() {
 		descriptions[i] = AddLabel(Trans.Text(32 + i), area.left, area.top + dd*(i + 1), colWhite);
 		columnAnchor = std::max(columnAnchor, (int)descriptions[i]->GetSize().x);
 	}
+#ifdef __ANDROID__
+	descriptions[5] = AddLabel("Render scale (restart)", area.left, area.top + dd*6, colWhite);
+	columnAnchor = std::max(columnAnchor, (int)descriptions[5]->GetSize().x);
+#endif
 	columnAnchor += area.left + 20*Winsys.scale;
 
 	Music.Play(param.config_music, true);
@@ -194,6 +223,9 @@ void CGameConfig::Loop(float time_step) {
 	descriptions[2]->Focussed(sound_vol->focussed());
 	descriptions[3]->Focussed(language->focussed());
 	descriptions[4]->Focussed(detail_level->focussed());
+#ifdef __ANDROID__
+	descriptions[5]->Focussed(render_scale->focussed());
+#endif
 
 	FT.SetColor(colWhite);
 	FT.DrawString(columnAnchor, area.top + dd + 3, res_names[resolution->GetValue()]);
@@ -201,11 +233,18 @@ void CGameConfig::Loop(float time_step) {
 	FT.DrawString(columnAnchor, area.top + dd * 3 + 3, Int_StrN(sound_vol->GetValue()));
 	FT.DrawString(columnAnchor, area.top + dd * 4 + 3, Trans.languages[language->GetValue()].language);
 	FT.DrawString(columnAnchor, area.top + dd * 5 + 3, Int_StrN(detail_level->GetValue()));
+#ifdef __ANDROID__
+	FT.DrawString(columnAnchor, area.top + dd * 6 + 3, Int_StrN(scale_values[render_scale->GetValue()]) + "%");
+#endif
 
+#ifndef __ANDROID__
+	// "edit options.txt" hint — not reachable on Android (app-private storage),
+	// and it collides with the render-scale row added there.
 	FT.SetColor(colLGrey);
 	FT.AutoSizeN(3);
 	FT.DrawString(CENTER, AutoYPosN(68), Trans.Text(41));
 	FT.DrawString(CENTER, AutoYPosN(72), Trans.Text(42));
+#endif
 
 	DrawGUI();
 

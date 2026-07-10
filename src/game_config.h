@@ -43,6 +43,7 @@ struct TParam {
 	std::size_t	res_type;
 	uint32_t	framerate;
 	int			perf_level;
+	int			render_scale;	// Android: 3D surface scale percent (50-100), applied at next launch
 	std::size_t	language;
 	int			sound_volume;
 	int			music_volume;
