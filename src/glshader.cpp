@@ -662,12 +662,16 @@ void Shader3D_SetModelRotation(const TMatrix<4, 4>& rot) {
 
 void Shader3D_SetModelTranslation(double x, double y, double z) {
 	if (!CoreShaders.ready) return;
-	// modelview = base * T: base with 4th column = base * [x y z 1]
-	// (TMatrix is column-major: m[col][row]).
+	// modelview = view * (T * rot). T*R keeps R's rotation columns and carries
+	// the raw translation t, so the composed matrix is base = view*rot in the
+	// rotation columns with 4th column = VIEW * [x y z 1] — the object position
+	// must not pass through the shared rotation (that would spin every position
+	// about the world origin, displacing distant objects off their ground).
+	// (TMatrix is column-major: m[col][row].)
 	TMatrix<4, 4> mv = g3d_base;
 	for (int r = 0; r < 4; r++)
-		mv[3][r] = x * g3d_base[0][r] + y * g3d_base[1][r]
-		         + z * g3d_base[2][r] + g3d_base[3][r];
+		mv[3][r] = x * g3d_view[0][r] + y * g3d_view[1][r]
+		         + z * g3d_view[2][r] + g3d_view[3][r];
 	uploadMVP_MV(g3d_proj, mv);
 }
 

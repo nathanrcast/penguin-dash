@@ -51,6 +51,12 @@ per-object 4×4 multiply or normal-matrix cofactor inverse; `Shader3D_Begin3D` u
 identity-model matrices so particle systems skip SetModel3D entirely. Menu 2D snow
 (per-sprite draws in `draw_ui_snow`) deliberately deferred — menu-only, revisit if menus
 ever profile slow on older devices.
+**Post-ship fix (2026-07-10, user-reported):** the fast path's translation column was computed
+from `base = view*rot` instead of `view`, spinning every tree's *position* 1° about the world
+origin — negligible near the start (where the A/B looked), ~10+ units sideways far down-course,
+leaving trees hovering over ground of a different height. `T*R` carries the raw translation, so
+the modelview 4th column must be `view*[t,1]`. Grounded-tree A/B re-verified on-device at the
+00:26/00:36 course sections.
 
 ## Hitch sources (frame spikes)
 
