@@ -126,9 +126,9 @@ a JRE is not enough for Gradle/AGP; point `JAVA_HOME` at it). Release signing re
   needs audible on-device verification.
 - **A4 – Assets:** package `data/` into APK assets; AAssetManager-backed IO, extract-on-first-run to
   `getExternalFilesDir()` keyed on versionCode (OneCube pattern).
-- **A5 – Sign & sideload:** PRODUCTION-SIGNED BUILD DONE (2026-07-09). Remaining: `adb install -r`
-  to the tablets, then on-device audio/control tuning pass.
-  Then create/push `nathanrcast/penguin-dash` (public, GPL).
+- **A5 – Sign & sideload:** PRODUCTION-SIGNED BUILD DONE (2026-07-09). PUBLISHED 2026-07-09:
+  `nathanrcast/penguin-dash` (public, GPL-2.0). Remaining: `adb install -r` to the tablets, then
+  on-device audio/control tuning pass.
 
 ## Risks
 
