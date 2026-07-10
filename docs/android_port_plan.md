@@ -122,13 +122,25 @@ a JRE is not enough for Gradle/AGP; point `JAVA_HOME` at it). Release signing re
     `adb install -r` to the tablets + on-device audio/control verification (needs a device attached).
 - **A2 – Input (touch + tilt):** DONE. `AInputEvent` touch → menu/UI + on-screen buttons
   (brake/jump/paddle); `ASensor` accelerometer → steering, with deadzone/sensitivity tuned for ages 6–10.
-- **A3 – Audio:** CODE DONE via Android `MediaPlayer` for `sf::Music`/`sf::Sound` (music + SFX);
-  needs audible on-device verification.
+- **A3 – Audio:** DONE + device-verified 2026-07-09: menu music playback confirmed on the tablet
+  (MediaPlayer prepare→start→"media started" in logcat; app's mixer track active, out of standby, at
+  the engine-set volume). SFX share the same MediaPlayer plumbing.
 - **A4 – Assets:** package `data/` into APK assets; AAssetManager-backed IO, extract-on-first-run to
   `getExternalFilesDir()` keyed on versionCode (OneCube pattern).
-- **A5 – Sign & sideload:** PRODUCTION-SIGNED BUILD DONE (2026-07-09). PUBLISHED 2026-07-09:
-  `nathanrcast/penguin-dash` (public, GPL-2.0). Remaining: `adb install -r` to the tablets, then
-  on-device audio/control tuning pass.
+- **A5 – Sign & sideload:** DONE 2026-07-09. Production-signed APK sideloaded to the Tab A9+
+  (old debug-signed install removed first — cert mismatch blocks `install -r`) and verified live:
+  player-select → main menu → Canadian Cup race, full 3D + HUD, music playing, virtual JUMP button
+  registered (charge bar filled on hold), no crashes. PUBLISHED 2026-07-09: `nathanrcast/penguin-dash`
+  (public, GPL-2.0).
+
+## Remaining polish (post-A5)
+
+- Tilt-steer feel pass — needs a human physically tilting the tablet (sensor path ran live without
+  crashing, but steering feel is untested).
+- Menu tap-focus quirk: a tap activates the previously-focused widget (focus updates after the press
+  lands) — first tap on a menu can trigger the wrong item; DPAD/keys unaffected.
+- Rebrand art assets: the in-game logo still says "Extreme Tux Racer" (`data/textures/etr_logo*`).
+- Install on the remaining kids' tablets.
 
 ## Risks
 
