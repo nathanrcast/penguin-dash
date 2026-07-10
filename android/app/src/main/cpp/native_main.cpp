@@ -401,6 +401,10 @@ int32_t handle_input(android_app* app, AInputEvent* ev) {
                 k = pd::EvKind::PointerDown;
                 int32_t pointerId = AMotionEvent_getPointerId(ev, pointerIndex);
                 set_pointer_button(e, pointerId, virtual_button_for_touch(e, x, y));
+                // Menus activate the *focused* widget and focus follows mouse
+                // motion; a tap has no hover phase, so move the cursor onto the
+                // widget before the press lands.
+                e->input.push_back({pd::EvKind::PointerMove, x, y, 0});
                 break;
             }
             case AMOTION_EVENT_ACTION_MOVE:

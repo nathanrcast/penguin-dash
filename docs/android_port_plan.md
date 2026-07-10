@@ -137,8 +137,6 @@ a JRE is not enough for Gradle/AGP; point `JAVA_HOME` at it). Release signing re
 
 - Tilt-steer feel pass — needs a human physically tilting the tablet (sensor path ran live without
   crashing, but steering feel is untested).
-- Menu tap-focus quirk: a tap activates the previously-focused widget (focus updates after the press
-  lands) — first tap on a menu can trigger the wrong item; DPAD/keys unaffected.
 - Rebrand art assets: the in-game logo still says "Extreme Tux Racer" (`data/textures/etr_logo*`).
 - Install on the remaining kids' tablets.
 
