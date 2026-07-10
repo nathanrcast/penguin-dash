@@ -24,6 +24,10 @@ load-time WAV-header duration — preserving the `getStatus()==Playing` guard th
 `tree_hit` retriggering. Music stays on MediaPlayer (state-transition only). Remaining human
 check: confirm by ear that pickups no longer stutter mid-race.
 
+**PLAN COMPLETE — user play-test on the A9+ 2026-07-10 confirms it runs well** (the original
+stutter report is resolved). Remaining rollout: install on the older kids' tablets with render
+scale 67–75%.
+
 **Stage 4 (P6) SHIPPED 2026-07-10**, device-verified on the A9+ end-to-end (UI → options.txt →
 next-boot 960×600 surface hardware-upscaled to the 1920×1200 window → tap-navigation and a race at
 50% → restored to 100%). Implementation: `param.render_scale` (50/67/75/100, default 100) with an
