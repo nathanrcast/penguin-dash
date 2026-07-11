@@ -44,8 +44,8 @@ struct TParam {
 	uint32_t	framerate;
 	int			perf_level;
 	int			render_scale;	// Android: 3D surface scale percent (50-100), applied at next launch
-	int			control_mode;	// Android: 0=tilt, 1=onscreen D-pad (WASD)
-	int			control_sensitivity;	// Android: 1-10, default 5; tilt gain + D-pad turn strength
+	int			control_mode;	// Android: 0=tilt, 1=onscreen floating stick + JUMP
+	int			control_sensitivity;	// Android: 1-10, default 5; tilt gain + stick turn strength
 	std::size_t	language;
 	int			sound_volume;
 	int			music_volume;

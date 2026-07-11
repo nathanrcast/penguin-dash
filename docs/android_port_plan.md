@@ -136,10 +136,14 @@ a JRE is not enough for Gradle/AGP; point `JAVA_HOME` at it). Release signing re
 ## Remaining polish (post-A5)
 
 - ~~Tilt-steer feel pass~~ DONE 2026-07-10: Configuration screen now has **Movement**
-  (Tilt / Onscreen D-pad) and **Sensitivity** (1–10). Onscreen mode is a WASD-equivalent
-  D-pad (W=paddle, S=brake, A/D=steer) plus JUMP; tilt mode keeps the accelerometer +
-  BRAKE/PADDLE/JUMP pads. Control overlays use high-contrast dark fills against snow.
-  Settings apply live via `pd::SetAndroidControls` (no restart).
+  (Tilt / Onscreen) and **Sensitivity** (1–10). Onscreen mode is a **floating stick**
+  (appears where the left thumb goes down; knob tracks the drag → continuous steer +
+  paddle/brake) plus fixed JUMP; rest position sits mid-lower-left (not glued to the
+  bezel). Tilt mode keeps the accelerometer + BRAKE/PADDLE/JUMP pads. Control overlays
+  use high-contrast dark fills against snow. Settings apply live via
+  `pd::SetAndroidControls` (no restart). Floating-stick follow behavior updated 2026-07-11.
+  Configuration screen layout fixed 2026-07-11 (row pitch from arrow height, larger
+  touch targets, no overlapping labels; fullscreen row omitted on Android).
 - ~~Rebrand art assets~~ DONE 2026-07-09: `menu_title.png` + `splash_1.png` replaced with a
   Penguin Dash wordmark (generator: `tools/make_logo.py`, uses the game's `pc_20.ttf`);
   versionCode bumped to 2 so installed devices re-extract assets. Device-verified.

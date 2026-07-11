@@ -35,6 +35,18 @@ static int focussed = -1;
 static bool locked_LR = false;
 static bool locked_UD = false;
 
+#ifdef __ANDROID__
+// Modestly larger than desktop so thumbs can hit them, but not so large that
+// Configuration's 8 rows overflow on short surfaces (render-scale < 100%).
+static float GuiArrowScale() { return Winsys.scale / 0.70f; }
+static int GuiArrowPadX() { return static_cast<int>(12 * Winsys.scale); }
+static int GuiArrowPadY() { return static_cast<int>(6 * Winsys.scale); }
+#else
+static float GuiArrowScale() { return Winsys.scale / 0.8f; }
+#endif
+static int GuiArrowW() { return static_cast<int>(32 * GuiArrowScale()); }
+static int GuiArrowH() { return static_cast<int>(16 * GuiArrowScale()); }
+
 static TWidget* AddWidget(TWidget* widget) {
 	if (Widgets.size() == focussed) {
 		widget->focus = true;
@@ -451,11 +463,18 @@ TIconButton* AddIconButton(int x, int y, const sf::Texture& texture, float size,
 }
 
 TArrow::TArrow(int x, int y, bool down_)
-	: TWidget(x, y, 32 * Winsys.scale / 0.8f, 16 * Winsys.scale / 0.8f)
+	: TWidget(x, y, GuiArrowW(), GuiArrowH())
 	, sprite(Tex.GetSFTexture(LB_ARROWS))
 	, down(down_) {
 	sprite.setPosition(x, y);
-	sprite.setScale(Winsys.scale / 0.8f, Winsys.scale / 0.8f);
+	sprite.setScale(GuiArrowScale(), GuiArrowScale());
+#ifdef __ANDROID__
+	// Expand the hit box beyond the drawn chevron so thumbs can land it.
+	mouseRect.left -= GuiArrowPadX();
+	mouseRect.top -= GuiArrowPadY();
+	mouseRect.width += GuiArrowPadX() * 2;
+	mouseRect.height += GuiArrowPadY() * 2;
+#endif
 
 	SetTexture();
 }
@@ -494,8 +513,8 @@ TArrow* AddArrow(int x, int y, bool down) {
 
 
 TUpDown::TUpDown(int x, int y, int min_, int max_, int value_, int distance, bool swapArrows_)
-	: TWidget(x, y, 32 * Winsys.scale / 0.8f, (32 + distance)*Winsys.scale / 0.8f)
-	, up(x, y + (16 + distance)*Winsys.scale / 0.8f, true)
+	: TWidget(x, y, GuiArrowW(), GuiArrowH() * 2 + static_cast<int>(distance * GuiArrowScale()))
+	, up(x, y + GuiArrowH() + static_cast<int>(distance * GuiArrowScale()), true)
 	, down(x, y, false)
 	, higher(swapArrows_ ? up : down)
 	, lower(swapArrows_ ? down : up)
@@ -505,6 +524,13 @@ TUpDown::TUpDown(int x, int y, int min_, int max_, int value_, int distance, boo
 	, swapArrows(swapArrows_) {
 	lower.SetActive(value < maximum);
 	higher.SetActive(value > minimum);
+#ifdef __ANDROID__
+	// Match the padded child arrows so focus/hit tests cover the whole control.
+	mouseRect.left -= GuiArrowPadX();
+	mouseRect.top -= GuiArrowPadY();
+	mouseRect.width += GuiArrowPadX() * 2;
+	mouseRect.height += GuiArrowPadY() * 2;
+#endif
 }
 
 void TUpDown::Draw() const {

@@ -301,8 +301,8 @@ static void CalcSteeringControls(CControl *ctrl, float time_step) {
 	} else if (left_turn ^ right_turn) {
 		double mag = 1.0;
 #ifdef __ANDROID__
-		// D-pad turn strength scales with sensitivity (1→0.4 … 10→1.0).
-		// Desktop keyboard WASD stays full lock (±1).
+		// Onscreen stick turn strength is scaled in native_main; this path is
+		// for leftover discrete left/right buttons. Desktop WASD stays full lock.
 		int sens = std::max(1, std::min(10, param.control_sensitivity));
 		mag = 0.4 + 0.6 * (sens - 1) / 9.0;
 #endif

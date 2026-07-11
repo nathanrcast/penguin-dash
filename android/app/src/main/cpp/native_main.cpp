@@ -46,6 +46,15 @@ struct Engine {
     std::deque<pd::InputEvent> input;  // filled on the glue thread, drained by the engine
     std::map<int32_t, int> pointerButtons;  // Android pointer id -> virtual button
     int virtualButtonRefs[6] = {0, 0, 0, 0, 0, 0};
+    // Floating onscreen stick (appears where the finger goes down).
+    bool stickActive = false;
+    int32_t stickPointerId = -1;
+    float stickBaseNx = 0.f;
+    float stickBaseNy = 0.f;
+    float stickKnobNx = 0.f;
+    float stickKnobNy = 0.f;
+    float stickAxisX = 0.f;
+    float stickAxisY = 0.f;
     ASensorManager* sensorManager = nullptr;
     const ASensor* accelerometer = nullptr;
     ASensorEventQueue* sensorQueue = nullptr;
@@ -66,9 +75,18 @@ std::string g_configDir;   // <internalDataPath>     — writable (options/playe
 int g_renderScalePct = 100;
 
 // Live control settings (updated via pd::SetAndroidControls from the engine).
-// 0 = tilt, 1 = onscreen D-pad (WASD). Sensitivity 1-10, default 5.
+// 0 = tilt, 1 = onscreen floating stick + JUMP. Sensitivity 1-10, default 5.
 int g_controlMode = 0;
 int g_controlSensitivity = 5;
+
+// Rest position / geometry for the floating stick (normalized, y down).
+// Kept higher than the bottom edge so thumbs clear the bezel; HUD matches these.
+constexpr float STICK_REST_NX = 0.15f;
+constexpr float STICK_REST_NY = 0.68f;
+constexpr float STICK_RADIUS_X = 0.12f;   // elliptical so it looks round on landscape
+constexpr float STICK_RADIUS_Y = 0.16f;
+constexpr float STICK_ACTIVATE_MAX_NX = 0.42f;  // left-side grab zone
+constexpr float STICK_ACTIVATE_MIN_NY = 0.35f;
 
 int read_render_scale(const std::string& configDir) {
     FILE* f = std::fopen((configDir + "/options.txt").c_str(), "rb");
@@ -113,18 +131,22 @@ void push_joystick_button(Engine* e, int button, bool pressed) {
     e->input.push_back(out);
 }
 
-void push_joystick_axis(Engine* e, float value) {
+void push_joystick_axis(Engine* e, int axis, float value) {
     pd::InputEvent out{};
     out.kind = pd::EvKind::JoystickMove;
     out.joystickId = 0;
-    out.joystickAxis = 0;  // X axis, consumed by CRacing::Jaxis as steering
+    out.joystickAxis = axis;  // 0=steer X, 1=paddle/brake Y (CRacing::Jaxis)
     out.joystickPosition = clampf(-1.f, value, 1.f) * 100.f;
     e->input.push_back(out);
 }
 
-// Onscreen D-pad: circular pad lower-left + circular JUMP lower-right.
-// Up=paddle(0), Down=brake(2), Left(4), Right(5), Jump(3).
-int virtual_button_for_dpad(float nx, float ny) {
+float stick_turn_scale() {
+    // Match former D-pad strength curve: sens 1→0.4 … 10→1.0.
+    float sens = static_cast<float>(std::max(1, std::min(10, g_controlSensitivity)));
+    return 0.4f + 0.6f * (sens - 1.f) / 9.f;
+}
+
+bool jump_hit(float nx, float ny) {
     // JUMP: near bottom-right edge (matches hud DrawAndroidDpad).
     const float jcx = 0.90f;
     const float jcy = 0.88f;
@@ -132,24 +154,56 @@ int virtual_button_for_dpad(float nx, float ny) {
     const float jry = 0.10f;
     const float jdx = (nx - jcx) / jrx;
     const float jdy = (ny - jcy) / jry;
-    if (jdx * jdx + jdy * jdy <= 1.f) return 3;
+    return jdx * jdx + jdy * jdy <= 1.f;
+}
 
-    // Circular D-pad near bottom-left edge.
-    const float cx = 0.13f;
-    const float cy = 0.87f;
-    const float dx = nx - cx;
-    const float dy = ny - cy;
-    // Elliptical hit so the circle looks round on landscape.
-    const float rx = 0.12f;
-    const float ry = 0.16f;
-    const float nxn = dx / rx;
-    const float nyn = dy / ry;
-    const float mag2 = nxn * nxn + nyn * nyn;
-    if (mag2 < 0.04f || mag2 > 1.f) return -1;
+bool stick_activation_zone(float nx, float ny) {
+    return nx < STICK_ACTIVATE_MAX_NX && ny > STICK_ACTIVATE_MIN_NY && !jump_hit(nx, ny);
+}
 
-    if (std::fabs(dx) > std::fabs(dy))
-        return dx < 0.f ? 4 : 5;  // left / right
-    return dy < 0.f ? 0 : 2;      // up=paddle / down=brake
+void release_stick(Engine* e) {
+    if (!e->stickActive && e->stickAxisX == 0.f && e->stickAxisY == 0.f) {
+        e->stickPointerId = -1;
+        return;
+    }
+    e->stickActive = false;
+    e->stickPointerId = -1;
+    e->stickKnobNx = e->stickBaseNx = STICK_REST_NX;
+    e->stickKnobNy = e->stickBaseNy = STICK_REST_NY;
+    if (e->stickAxisX != 0.f) {
+        e->stickAxisX = 0.f;
+        push_joystick_axis(e, 0, 0.f);
+    }
+    if (e->stickAxisY != 0.f) {
+        e->stickAxisY = 0.f;
+        push_joystick_axis(e, 1, 0.f);
+    }
+}
+
+void update_stick_from_touch(Engine* e, float nx, float ny) {
+    float dx = (nx - e->stickBaseNx) / STICK_RADIUS_X;
+    float dy = (ny - e->stickBaseNy) / STICK_RADIUS_Y;
+    float mag = std::sqrt(dx * dx + dy * dy);
+    if (mag > 1.f) {
+        dx /= mag;
+        dy /= mag;
+        mag = 1.f;
+    }
+    e->stickKnobNx = e->stickBaseNx + dx * STICK_RADIUS_X;
+    e->stickKnobNy = e->stickBaseNy + dy * STICK_RADIUS_Y;
+
+    float ax = dx * stick_turn_scale();
+    // Y: finger up (smaller ny) → negative → paddle; down → brake (CRacing::Jaxis).
+    float ay = dy;
+    if (std::fabs(ax - e->stickAxisX) >= 0.02f || (ax == 0.f) != (e->stickAxisX == 0.f)) {
+        e->stickAxisX = ax;
+        push_joystick_axis(e, 0, ax);
+    }
+    if (std::fabs(ay - e->stickAxisY) >= 0.02f || (ay == 0.f) != (e->stickAxisY == 0.f)) {
+        e->stickAxisY = ay;
+        push_joystick_axis(e, 1, ay);
+    }
+    (void)mag;
 }
 
 int virtual_button_for_tilt_zones(float nx, float ny) {
@@ -165,8 +219,9 @@ int virtual_button_for_touch(const Engine* e, float x, float y) {
     const float nx = x / static_cast<float>(e->width);
     const float ny = y / static_cast<float>(e->height); // Android touch origin is top-left.
 
+    // Onscreen mode: only JUMP is a discrete button; steering is the floating stick.
     if (!tilt_mode_active())
-        return virtual_button_for_dpad(nx, ny);
+        return jump_hit(nx, ny) ? 3 : -1;
     return virtual_button_for_tilt_zones(nx, ny);
 }
 
@@ -198,6 +253,7 @@ void release_all_virtual_buttons(Engine* e) {
             push_joystick_button(e, button, false);
         }
     }
+    release_stick(e);
 }
 
 float normalize_tilt(float raw) {
@@ -240,7 +296,7 @@ void set_sensors_enabled(Engine* e, bool enabled) {
         ASensorEventQueue_disableSensor(e->sensorQueue, e->accelerometer);
         e->tiltAxis = 0.f;
         e->lastTiltEvent = 999.f;
-        push_joystick_axis(e, 0.f);
+        push_joystick_axis(e, 0, 0.f);
         LOGI("accelerometer disabled");
     }
     e->sensorsEnabled = enabled;
@@ -249,8 +305,7 @@ void set_sensors_enabled(Engine* e, bool enabled) {
 void apply_control_settings(Engine* e) {
     // Only enable the accelerometer when tilt mode is selected.
     set_sensors_enabled(e, tilt_mode_active());
-    if (!tilt_mode_active())
-        release_all_virtual_buttons(e);
+    release_all_virtual_buttons(e);
 }
 
 void drain_sensors(Engine* e) {
@@ -267,7 +322,7 @@ void drain_sensors(Engine* e) {
 
         if (std::fabs(e->tiltAxis - e->lastTiltEvent) >= TILT_EVENT_EPSILON) {
             e->lastTiltEvent = e->tiltAxis;
-            push_joystick_axis(e, e->tiltAxis);
+            push_joystick_axis(e, 0, e->tiltAxis);
         }
     }
 }
@@ -494,13 +549,29 @@ int32_t handle_input(android_app* app, AInputEvent* ev) {
         float sy = (e->windowH > 0) ? (float)e->height / e->windowH : 1.f;
         int x = static_cast<int>(AMotionEvent_getX(ev, pointerIndex) * sx);
         int y = static_cast<int>(AMotionEvent_getY(ev, pointerIndex) * sy);
+        auto to_nx = [&](float px) {
+            return e->width > 0 ? px / static_cast<float>(e->width) : 0.f;
+        };
+        auto to_ny = [&](float py) {
+            return e->height > 0 ? py / static_cast<float>(e->height) : 0.f;
+        };
         pd::EvKind k;
         switch (action) {
             case AMOTION_EVENT_ACTION_DOWN:
             case AMOTION_EVENT_ACTION_POINTER_DOWN: {
                 k = pd::EvKind::PointerDown;
                 int32_t pointerId = AMotionEvent_getPointerId(ev, pointerIndex);
-                set_pointer_button(e, pointerId, virtual_button_for_touch(e, x, y));
+                const float nx = to_nx(x);
+                const float ny = to_ny(y);
+                if (!tilt_mode_active() && !e->stickActive && stick_activation_zone(nx, ny)) {
+                    e->stickActive = true;
+                    e->stickPointerId = pointerId;
+                    e->stickBaseNx = e->stickKnobNx = nx;
+                    e->stickBaseNy = e->stickKnobNy = ny;
+                    e->stickAxisX = e->stickAxisY = 0.f;
+                } else {
+                    set_pointer_button(e, pointerId, virtual_button_for_touch(e, x, y));
+                }
                 // Menus activate the *focused* widget and focus follows mouse
                 // motion; a tap has no hover phase, so move the cursor onto the
                 // widget before the press lands.
@@ -511,15 +582,23 @@ int32_t handle_input(android_app* app, AInputEvent* ev) {
                 k = pd::EvKind::PointerMove;
                 for (std::size_t i = 0; i < AMotionEvent_getPointerCount(ev); i++) {
                     int32_t pointerId = AMotionEvent_getPointerId(ev, i);
-                    set_pointer_button(e, pointerId, virtual_button_for_touch(
-                        e, AMotionEvent_getX(ev, i) * sx, AMotionEvent_getY(ev, i) * sy));
+                    float px = AMotionEvent_getX(ev, i) * sx;
+                    float py = AMotionEvent_getY(ev, i) * sy;
+                    if (!tilt_mode_active() && e->stickActive && pointerId == e->stickPointerId) {
+                        update_stick_from_touch(e, to_nx(px), to_ny(py));
+                    } else {
+                        set_pointer_button(e, pointerId, virtual_button_for_touch(e, px, py));
+                    }
                 }
                 break;
             case AMOTION_EVENT_ACTION_UP:
             case AMOTION_EVENT_ACTION_POINTER_UP: {
                 k = pd::EvKind::PointerUp;
                 int32_t pointerId = AMotionEvent_getPointerId(ev, pointerIndex);
-                set_pointer_button(e, pointerId, -1);
+                if (e->stickActive && pointerId == e->stickPointerId)
+                    release_stick(e);
+                else
+                    set_pointer_button(e, pointerId, -1);
                 break;
             }
             case AMOTION_EVENT_ACTION_CANCEL:
@@ -609,6 +688,24 @@ void SetAndroidControls(int mode, int sensitivity) {
     LOGI("controls: mode=%s sensitivity=%d",
          g_controlMode == 0 ? "tilt" : "onscreen", g_controlSensitivity);
     apply_control_settings(&g_engine);
+}
+
+void GetAndroidStickVisual(bool& active,
+                           float& restNx, float& restNy,
+                           float& baseNx, float& baseNy,
+                           float& knobNx, float& knobNy) {
+    restNx = STICK_REST_NX;
+    restNy = STICK_REST_NY;
+    active = g_engine.stickActive;
+    if (active) {
+        baseNx = g_engine.stickBaseNx;
+        baseNy = g_engine.stickBaseNy;
+        knobNx = g_engine.stickKnobNx;
+        knobNy = g_engine.stickKnobNy;
+    } else {
+        baseNx = knobNx = STICK_REST_NX;
+        baseNy = knobNy = STICK_REST_NY;
+    }
 }
 
 } // namespace pd

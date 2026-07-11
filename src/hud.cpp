@@ -33,7 +33,9 @@ GNU General Public License for more details.
 #include <algorithm>
 #include <cmath>
 #include <vector>
-
+#ifdef __ANDROID__
+#include "native_bridge.h"
+#endif
 
 #define GAUGE_IMG_SIZE 128
 #define ENERGY_GAUGE_BOTTOM 3.0
@@ -493,28 +495,43 @@ static void DrawAndroidDpad() {
 	const float w = Winsys.resolution.width;
 	const float h = Winsys.resolution.height;
 	const sf::Color fill(20, 28, 40, 160);
+	const sf::Color fillActive(20, 28, 40, 200);
 	const sf::Color border(255, 255, 255, 230);
+	const sf::Color knobFill(240, 240, 245, 220);
+	const sf::Color knobBorder(255, 255, 255, 245);
 	const sf::Color arrow(255, 255, 255, 235);
 
-	// Near the bottom-left edge; keep in sync with native_main.cpp hit zones.
-	const float cx = w * 0.13f;
-	const float cy = h * 0.87f;
+	bool stickActive = false;
+	float restNx = 0.15f, restNy = 0.68f;
+	float baseNx = restNx, baseNy = restNy;
+	float knobNx = restNx, knobNy = restNy;
+	pd::GetAndroidStickVisual(stickActive, restNx, restNy, baseNx, baseNy, knobNx, knobNy);
+
+	// Floating stick: rest marker when idle; base + knob follow the finger when held.
+	const float cx = w * (stickActive ? baseNx : restNx);
+	const float cy = h * (stickActive ? baseNy : restNy);
 	const float radius = std::min(w, h) * 0.125f;
+	const float knobCx = w * (stickActive ? knobNx : restNx);
+	const float knobCy = h * (stickActive ? knobNy : restNy);
+	const float knobR = radius * 0.38f;
 
 	const float jumpCx = w * 0.90f;
 	const float jumpCy = h * 0.88f;
 	const float jumpR = std::min(w, h) * 0.070f;
 
 	Shader2D_Begin(w, h);
-	DrawAndroidCircle(cx, cy, radius, fill, border);
+	DrawAndroidCircle(cx, cy, radius, stickActive ? fillActive : fill, border);
+	if (stickActive)
+		DrawAndroidCircle(knobCx, knobCy, knobR, knobFill, knobBorder);
+	else {
+		const float arrowSize = radius * 0.28f;
+		const float arrowOut = radius * 0.48f;
+		DrawAndroidArrow(cx, cy - arrowOut, arrowSize, 0, arrow);
+		DrawAndroidArrow(cx, cy + arrowOut, arrowSize, 1, arrow);
+		DrawAndroidArrow(cx - arrowOut, cy, arrowSize, 2, arrow);
+		DrawAndroidArrow(cx + arrowOut, cy, arrowSize, 3, arrow);
+	}
 	DrawAndroidCircle(jumpCx, jumpCy, jumpR, fill, border);
-
-	const float arrowSize = radius * 0.28f;
-	const float arrowOut = radius * 0.48f;
-	DrawAndroidArrow(cx, cy - arrowOut, arrowSize, 0, arrow);
-	DrawAndroidArrow(cx, cy + arrowOut, arrowSize, 1, arrow);
-	DrawAndroidArrow(cx - arrowOut, cy, arrowSize, 2, arrow);
-	DrawAndroidArrow(cx + arrowOut, cy, arrowSize, 3, arrow);
 	Shader2D_End();
 
 	Winsys.beginSFML();

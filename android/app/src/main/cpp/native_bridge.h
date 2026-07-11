@@ -60,9 +60,17 @@ const char* DataDir();
 const char* ConfigDir();
 
 // Live Android control settings from the Configuration screen / race enter.
-// mode: 0 = tilt (accelerometer), 1 = onscreen D-pad (WASD).
-// sensitivity: 1-10 (default 5); scales tilt gain and D-pad turn strength.
+// mode: 0 = tilt (accelerometer), 1 = onscreen floating stick + JUMP.
+// sensitivity: 1-10 (default 5); scales tilt gain and stick turn strength.
 void SetAndroidControls(int mode, int sensitivity);
+
+// Onscreen stick visual for the HUD (normalized screen coords, y down).
+// When inactive, HUD draws at restNx/restNy; when active, base follows the
+// finger-down point and knob tracks the drag (clamped to the stick radius).
+void GetAndroidStickVisual(bool& active,
+                           float& restNx, float& restNy,
+                           float& baseNx, float& baseNy,
+                           float& knobNx, float& knobNy);
 
 } // namespace pd
 

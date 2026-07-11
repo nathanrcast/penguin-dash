@@ -42,6 +42,7 @@ int g_pointer_y = 0;
 bool g_key_down[sf::Keyboard::KeyCount] = {};
 bool g_joy_button_down[16] = {};
 float g_joy_axis_x = 0.f;
+float g_joy_axis_y = 0.f;
 
 // ---- 2D draw helpers (A1d) ----
 // The Shader2D program uses a bottom-left ortho (Setup2dScene); SFML drawables
@@ -463,9 +464,14 @@ bool Keyboard::isKeyPressed(Key key) {
 Vector2i Mouse::getPosition() { return Vector2i(g_pointer_x, g_pointer_y); }
 bool Joystick::isConnected(unsigned int joystick) { return joystick == 0; }
 unsigned int Joystick::getButtonCount(unsigned int joystick) { return joystick == 0 ? 4 : 0; }
-bool Joystick::hasAxis(unsigned int joystick, Axis axis) { return joystick == 0 && axis == X; }
+bool Joystick::hasAxis(unsigned int joystick, Axis axis) {
+    return joystick == 0 && (axis == X || axis == Y);
+}
 float Joystick::getAxisPosition(unsigned int joystick, Axis axis) {
-    return (joystick == 0 && axis == X) ? g_joy_axis_x : 0.f;
+    if (joystick != 0) return 0.f;
+    if (axis == X) return g_joy_axis_x;
+    if (axis == Y) return g_joy_axis_y;
+    return 0.f;
 }
 
 // ---- VideoMode / Window (A1c: bridged to native_main's EGL surface) ----
@@ -523,8 +529,12 @@ bool Window::pollEvent(Event& event) {
             event.joystickMove.joystickId = ie.joystickId;
             event.joystickMove.axis = (ie.joystickAxis == 0) ? Joystick::X : Joystick::Y;
             event.joystickMove.position = ie.joystickPosition;
-            if (ie.joystickId == 0 && event.joystickMove.axis == Joystick::X)
-                g_joy_axis_x = ie.joystickPosition;
+            if (ie.joystickId == 0) {
+                if (event.joystickMove.axis == Joystick::X)
+                    g_joy_axis_x = ie.joystickPosition;
+                else if (event.joystickMove.axis == Joystick::Y)
+                    g_joy_axis_y = ie.joystickPosition;
+            }
             break;
         case pd::EvKind::JoystickButtonDown:
         case pd::EvKind::JoystickButtonUp:

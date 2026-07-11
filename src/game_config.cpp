@@ -171,12 +171,12 @@ void SaveConfigFile() {
 	liste.Add();
 
 	AddComment(liste, "Movement controls [0...1] (Android only)");
-	AddComment(liste, "0 = tilt (accelerometer), 1 = onscreen D-pad (WASD)");
+	AddComment(liste, "0 = tilt (accelerometer), 1 = onscreen floating stick + JUMP");
 	AddItem(liste, "control_mode", param.control_mode);
 	liste.Add();
 
 	AddComment(liste, "Control sensitivity [1...10] (Android only)");
-	AddComment(liste, "Higher = less tilt for full steer / stronger D-pad turns. Default 5.");
+	AddComment(liste, "Higher = less tilt for full steer / stronger stick turns. Default 5.");
 	AddItem(liste, "control_sensitivity", param.control_sensitivity);
 	liste.Add();
 

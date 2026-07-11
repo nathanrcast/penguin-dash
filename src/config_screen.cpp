@@ -41,6 +41,7 @@ Then edit the below functions:
 
 #include "config_screen.h"
 #include "spx.h"
+#include <algorithm>
 #include <cstdlib>
 #include "translation.h"
 #include "particles.h"
@@ -83,18 +84,23 @@ static TLabel* descriptions[5];
 #endif
 
 void SetConfig() {
-	if (mus_vol->GetValue() != param.music_volume ||
+	bool changed =
+	        mus_vol->GetValue() != param.music_volume ||
 	        sound_vol->GetValue() != param.sound_volume ||
 	        language->GetValue() != param.language ||
 	        resolution->GetValue() != param.res_type ||
-	        detail_level->GetValue() != param.perf_level ||
+	        detail_level->GetValue() != param.perf_level;
 #ifdef __ANDROID__
+	changed = changed ||
 	        scale_values[render_scale->GetValue()] != param.render_scale ||
 	        control_mode->GetValue() != param.control_mode ||
-	        control_sensitivity->GetValue() != param.control_sensitivity ||
+	        control_sensitivity->GetValue() != param.control_sensitivity;
+#else
+	changed = changed || fullscreen->checked != param.fullscreen;
 #endif
-	        fullscreen->checked != param.fullscreen) {
 
+	if (changed) {
+#ifndef __ANDROID__
 		if (resolution->GetValue() != param.res_type || fullscreen->checked != param.fullscreen) {
 			// these changes require a new VideoMode
 			param.res_type = resolution->GetValue();
@@ -102,6 +108,7 @@ void SetConfig() {
 			Winsys.SetupVideoMode(param.res_type);
 			init_ui_snow(); // Reinitialize UI snow to avoid ugly snow-free stripes at the borders
 		}
+#endif
 
 		// the followind config params don't require a new VideoMode
 		// they only must stored in the param structure (and saved)
@@ -109,6 +116,7 @@ void SetConfig() {
 		Music.SetVolume(param.music_volume);
 		param.sound_volume = sound_vol->GetValue();
 		param.perf_level = detail_level->GetValue();
+		param.res_type = resolution->GetValue();
 #ifdef __ANDROID__
 		// Native host reads this from options.txt at boot; applies next launch.
 		param.render_scale = scale_values[render_scale->GetValue()];
@@ -170,6 +178,7 @@ void CGameConfig::Motion(int x, int y) {
 static TArea area;
 static int dd;
 static int columnAnchor;
+static int firstRow; // 0 on Android (no fullscreen row), 1 on desktop
 
 void CGameConfig::Enter() {
 	Winsys.ShowCursor(!param.ice_cursor);
@@ -177,55 +186,95 @@ void CGameConfig::Enter() {
 	for (int i=0; i<NUM_RESOLUTIONS; i++)
 		res_names[i] = Winsys.GetResName(i);
 
-	int framewidth = 550 * Winsys.scale;
 #ifdef __ANDROID__
-	// Extra Android rows (render scale + movement + sensitivity) need more vertical room.
-	area = AutoAreaN(22, 82, framewidth);
+	// Tablet / render-scaled surfaces are short. The old `dd > 32` cap packed
+	// eight rows into overlapping text + fighting UpDown hitboxes. Pitch rows
+	// from the real arrow widget height, use most of the screen, and skip the
+	// useless fullscreen checkbox (NativeActivity is always full-window).
+	int framewidth = static_cast<int>(620 * Winsys.scale);
+	if (framewidth > static_cast<int>(Winsys.resolution.width) - 32)
+		framewidth = static_cast<int>(Winsys.resolution.width) - 32;
+	area = AutoAreaN(12, 88, framewidth);
+	FT.AutoSizeN(3);
+	const float arrowScale = Winsys.scale / 0.70f; // matches GuiArrowScale in gui.cpp
+	const int avail = area.bottom - area.top;
+	const int maxRow = std::max(1, avail / 8);
+	// Gap between the two chevrons — shrink if the surface is short (render scale).
+	int udDistance = 8;
+	int udHeight = static_cast<int>((32 + udDistance) * arrowScale);
+	const int padY = static_cast<int>(6 * Winsys.scale);
+	if (udHeight + padY * 2 + 2 > maxRow) {
+		udDistance = std::max(2, static_cast<int>(maxRow / arrowScale) - 32 - 2);
+		udHeight = static_cast<int>((32 + udDistance) * arrowScale);
+	}
+	dd = FT.AutoDistanceN(4);
+	const int minPitch = udHeight + padY * 2 + 2;
+	if (dd < minPitch) dd = minPitch;
+	if (dd > maxRow) dd = maxRow;
+	const int rightpos = area.right - static_cast<int>(36 * arrowScale);
+	const int btnY = std::min(AutoYPosN(93), area.top + dd * 8 + static_cast<int>(4 * Winsys.scale));
+	firstRow = 0; // options start at area.top (no checkbox above)
 #else
+	int framewidth = 550 * Winsys.scale;
 	area = AutoAreaN(30, 80, framewidth);
-#endif
 	FT.AutoSizeN(4);
 	dd = FT.AutoDistanceN(3);
 	if (dd < 36) dd = 36;
-#ifdef __ANDROID__
-	if (dd > 32) dd = 32; // keep eight rows on-screen
+	const int rightpos = area.right - 48;
+	const int btnY = AutoYPosN(80);
+	const int udDistance = 2;
+	firstRow = 1; // row 0 is fullscreen checkbox
 #endif
-	int rightpos = area.right -48;
 
 	ResetGUI();
 	unsigned int siz = FT.AutoSizeN(5);
+#ifndef __ANDROID__
 	fullscreen = AddCheckbox(area.left, area.top, framewidth-16, Trans.Text(31));
 	fullscreen->checked = param.fullscreen;
-
-	resolution = AddUpDown(rightpos, area.top+dd*1, 0, NUM_RESOLUTIONS-1, (int)param.res_type);
-	mus_vol = AddUpDown(rightpos, area.top+dd*2, 0, 100, param.music_volume, 2, true);
-	sound_vol = AddUpDown(rightpos, area.top+dd*3, 0, 100, param.sound_volume, 2, true);
-	language = AddUpDown(rightpos, area.top+dd*4, 0, (int)Trans.languages.size() - 1, (int)param.language);
-	detail_level = AddUpDown(rightpos, area.top+dd*5, 1, 4, param.perf_level, 2, true);
-#ifdef __ANDROID__
-	render_scale = AddUpDown(rightpos, area.top+dd*6, 0, 3, ScaleIndexFromValue(param.render_scale), 2, true);
-	control_mode = AddUpDown(rightpos, area.top+dd*7, 0, 1, param.control_mode, 1, true);
-	control_sensitivity = AddUpDown(rightpos, area.top+dd*8, 1, 10, param.control_sensitivity, 1, true);
+#else
+	fullscreen = nullptr;
 #endif
 
-	textbuttons[0] = AddTextButton(Trans.Text(28), area.left+50, AutoYPosN(80), siz);
-	float len = FT.GetTextWidth(Trans.Text(8));
-	textbuttons[1] = AddTextButton(Trans.Text(15), area.right-len-50, AutoYPosN(80), siz);
+	resolution = AddUpDown(rightpos, area.top+dd*(firstRow+0), 0, NUM_RESOLUTIONS-1, (int)param.res_type, udDistance, true);
+	mus_vol = AddUpDown(rightpos, area.top+dd*(firstRow+1), 0, 100, param.music_volume, udDistance, true);
+	sound_vol = AddUpDown(rightpos, area.top+dd*(firstRow+2), 0, 100, param.sound_volume, udDistance, true);
+	language = AddUpDown(rightpos, area.top+dd*(firstRow+3), 0, (int)Trans.languages.size() - 1, (int)param.language, udDistance, true);
+	detail_level = AddUpDown(rightpos, area.top+dd*(firstRow+4), 1, 4, param.perf_level, udDistance, true);
+#ifdef __ANDROID__
+	render_scale = AddUpDown(rightpos, area.top+dd*(firstRow+5), 0, 3, ScaleIndexFromValue(param.render_scale), udDistance, true);
+	control_mode = AddUpDown(rightpos, area.top+dd*(firstRow+6), 0, 1, param.control_mode, udDistance, true);
+	control_sensitivity = AddUpDown(rightpos, area.top+dd*(firstRow+7), 1, 10, param.control_sensitivity, udDistance, true);
+#endif
 
+	textbuttons[0] = AddTextButton(Trans.Text(28), area.left+50, btnY, siz);
+	float len = FT.GetTextWidth(Trans.Text(8));
+	textbuttons[1] = AddTextButton(Trans.Text(15), area.right-len-50, btnY, siz);
+
+#ifdef __ANDROID__
+	FT.AutoSizeN(3);
+#else
+	FT.AutoSizeN(4);
+#endif
 	columnAnchor = 0;
 	for (int i = 0; i < 5; i++) {
-		descriptions[i] = AddLabel(Trans.Text(32 + i), area.left, area.top + dd*(i + 1), colWhite);
+		descriptions[i] = AddLabel(Trans.Text(32 + i), area.left, area.top + dd*(firstRow + i), colWhite);
 		columnAnchor = std::max(columnAnchor, (int)descriptions[i]->GetSize().x);
 	}
 #ifdef __ANDROID__
-	descriptions[5] = AddLabel("Render scale (restart)", area.left, area.top + dd*6, colWhite);
-	descriptions[6] = AddLabel("Movement", area.left, area.top + dd*7, colWhite);
-	descriptions[7] = AddLabel("Sensitivity", area.left, area.top + dd*8, colWhite);
+	// Keep labels short so the value column stays clear of the arrow column.
+	descriptions[5] = AddLabel("Render scale", area.left, area.top + dd*(firstRow+5), colWhite);
+	descriptions[6] = AddLabel("Movement", area.left, area.top + dd*(firstRow+6), colWhite);
+	descriptions[7] = AddLabel("Sensitivity", area.left, area.top + dd*(firstRow+7), colWhite);
 	columnAnchor = std::max(columnAnchor, (int)descriptions[5]->GetSize().x);
 	columnAnchor = std::max(columnAnchor, (int)descriptions[6]->GetSize().x);
 	columnAnchor = std::max(columnAnchor, (int)descriptions[7]->GetSize().x);
 #endif
-	columnAnchor += area.left + 20*Winsys.scale;
+	columnAnchor += area.left + static_cast<int>(20 * Winsys.scale);
+#ifdef __ANDROID__
+	// Leave a clear gutter between values and the UpDown arrows.
+	const int valueMax = rightpos - static_cast<int>(100 * Winsys.scale);
+	if (columnAnchor > valueMax) columnAnchor = valueMax;
+#endif
 
 	Music.Play(param.config_music, true);
 }
@@ -241,7 +290,11 @@ void CGameConfig::Loop(float time_step) {
 
 	DrawGUIBackground(Winsys.scale);
 
+#ifdef __ANDROID__
+	FT.AutoSizeN(3);
+#else
 	FT.AutoSizeN(4);
+#endif
 
 	descriptions[0]->Focussed(resolution->focussed());
 	descriptions[1]->Focussed(mus_vol->focussed());
@@ -255,15 +308,15 @@ void CGameConfig::Loop(float time_step) {
 #endif
 
 	FT.SetColor(colWhite);
-	FT.DrawString(columnAnchor, area.top + dd + 3, res_names[resolution->GetValue()]);
-	FT.DrawString(columnAnchor, area.top + dd * 2 + 3, Int_StrN(mus_vol->GetValue()));
-	FT.DrawString(columnAnchor, area.top + dd * 3 + 3, Int_StrN(sound_vol->GetValue()));
-	FT.DrawString(columnAnchor, area.top + dd * 4 + 3, Trans.languages[language->GetValue()].language);
-	FT.DrawString(columnAnchor, area.top + dd * 5 + 3, Int_StrN(detail_level->GetValue()));
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 0) + 3, res_names[resolution->GetValue()]);
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 1) + 3, Int_StrN(mus_vol->GetValue()));
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 2) + 3, Int_StrN(sound_vol->GetValue()));
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 3) + 3, Trans.languages[language->GetValue()].language);
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 4) + 3, Int_StrN(detail_level->GetValue()));
 #ifdef __ANDROID__
-	FT.DrawString(columnAnchor, area.top + dd * 6 + 3, Int_StrN(scale_values[render_scale->GetValue()]) + "%");
-	FT.DrawString(columnAnchor, area.top + dd * 7 + 3, control_mode_names[control_mode->GetValue()]);
-	FT.DrawString(columnAnchor, area.top + dd * 8 + 3, Int_StrN(control_sensitivity->GetValue()));
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 5) + 3, Int_StrN(scale_values[render_scale->GetValue()]) + "%");
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 6) + 3, control_mode_names[control_mode->GetValue()]);
+	FT.DrawString(columnAnchor, area.top + dd * (firstRow + 7) + 3, Int_StrN(control_sensitivity->GetValue()));
 #endif
 
 #ifndef __ANDROID__
