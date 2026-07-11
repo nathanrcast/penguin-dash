@@ -64,6 +64,8 @@ void LoadConfigFile() {
 		param.res_type = SPIntN(*line, "res_type", 0);
 		param.perf_level = SPIntN(*line, "detail_level", 3);
 		param.render_scale = std::max(50, std::min(SPIntN(*line, "render_scale", 100), 100));
+		param.control_mode = std::max(0, std::min(SPIntN(*line, "control_mode", 0), 1));
+		param.control_sensitivity = std::max(1, std::min(SPIntN(*line, "control_sensitivity", 5), 10));
 		param.language = Trans.GetLangIdx(SPStrN(*line, "language", "EN_en"));
 		param.sound_volume = SPIntN(*line, "sound_volume", 90);
 		param.music_volume = SPIntN(*line, "music_volume", 20);
@@ -95,6 +97,8 @@ void SetConfigDefaults() {
 	param.res_type = 0; // 0=auto / 1=800x600 / 2=1024x768 ...
 	param.perf_level = 3;	// detail level
 	param.render_scale = 100;
+	param.control_mode = 0;		// tilt
+	param.control_sensitivity = 5;
 	param.language = std::string::npos; // If language is set to npos, ETR will try to load default system language
 	param.sound_volume = 90;
 	param.music_volume = 20;
@@ -164,6 +168,16 @@ void SaveConfigFile() {
 	AddComment(liste, "Renders 3D at a smaller surface and lets the hardware upscale;");
 	AddComment(liste, "big framerate win on weak GPUs. Applied at the next app launch.");
 	AddItem(liste, "render_scale", param.render_scale);
+	liste.Add();
+
+	AddComment(liste, "Movement controls [0...1] (Android only)");
+	AddComment(liste, "0 = tilt (accelerometer), 1 = onscreen D-pad (WASD)");
+	AddItem(liste, "control_mode", param.control_mode);
+	liste.Add();
+
+	AddComment(liste, "Control sensitivity [1...10] (Android only)");
+	AddComment(liste, "Higher = less tilt for full steer / stronger D-pad turns. Default 5.");
+	AddItem(liste, "control_sensitivity", param.control_sensitivity);
 	liste.Add();
 
 	AddComment(liste, "Language code");

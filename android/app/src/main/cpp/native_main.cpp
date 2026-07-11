@@ -45,7 +45,7 @@ struct Engine {
     bool closing = false;  // activity asked to finish
     std::deque<pd::InputEvent> input;  // filled on the glue thread, drained by the engine
     std::map<int32_t, int> pointerButtons;  // Android pointer id -> virtual button
-    int virtualButtonRefs[4] = {0, 0, 0, 0};
+    int virtualButtonRefs[6] = {0, 0, 0, 0, 0, 0};
     ASensorManager* sensorManager = nullptr;
     const ASensor* accelerometer = nullptr;
     ASensorEventQueue* sensorQueue = nullptr;
@@ -65,6 +65,11 @@ std::string g_configDir;   // <internalDataPath>     — writable (options/playe
 // the in-game Configuration screen (saved to options.txt), read here at boot.
 int g_renderScalePct = 100;
 
+// Live control settings (updated via pd::SetAndroidControls from the engine).
+// 0 = tilt, 1 = onscreen D-pad (WASD). Sensitivity 1-10, default 5.
+int g_controlMode = 0;
+int g_controlSensitivity = 5;
+
 int read_render_scale(const std::string& configDir) {
     FILE* f = std::fopen((configDir + "/options.txt").c_str(), "rb");
     if (!f) return 100;
@@ -83,12 +88,21 @@ int read_render_scale(const std::string& configDir) {
 
 constexpr int LOOPER_ID_SENSOR = LOOPER_ID_USER;
 constexpr float TILT_DEADZONE = 0.12f;
-constexpr float TILT_FULL_SCALE = 5.5f;  // m/s^2; gentle roll reaches full steer
+constexpr float TILT_FULL_SCALE = 5.5f;  // m/s^2 at sensitivity 5
 constexpr float TILT_SMOOTHING = 0.25f;
 constexpr float TILT_EVENT_EPSILON = 0.025f;
+constexpr int VIRTUAL_BUTTON_COUNT = 6;
 
 float clampf(float lo, float value, float hi) {
     return value < lo ? lo : (value > hi ? hi : value);
+}
+
+bool tilt_mode_active() { return g_controlMode == 0; }
+
+float tilt_full_scale() {
+    // Higher sensitivity → less physical tilt for full steer.
+    float sens = static_cast<float>(std::max(1, std::min(10, g_controlSensitivity)));
+    return TILT_FULL_SCALE * (5.f / sens);
 }
 
 void push_joystick_button(Engine* e, int button, bool pressed) {
@@ -108,16 +122,52 @@ void push_joystick_axis(Engine* e, float value) {
     e->input.push_back(out);
 }
 
-int virtual_button_for_touch(const Engine* e, float x, float y) {
-    if (e->width <= 0 || e->height <= 0) return -1;
-    const float nx = x / static_cast<float>(e->width);
-    const float ny = y / static_cast<float>(e->height); // Android touch origin is top-left.
+// Onscreen D-pad: circular pad lower-left + circular JUMP lower-right.
+// Up=paddle(0), Down=brake(2), Left(4), Right(5), Jump(3).
+int virtual_button_for_dpad(float nx, float ny) {
+    // JUMP: near bottom-right edge (matches hud DrawAndroidDpad).
+    const float jcx = 0.90f;
+    const float jcy = 0.88f;
+    const float jrx = 0.075f;
+    const float jry = 0.10f;
+    const float jdx = (nx - jcx) / jrx;
+    const float jdy = (ny - jcy) / jry;
+    if (jdx * jdx + jdy * jdy <= 1.f) return 3;
 
+    // Circular D-pad near bottom-left edge.
+    const float cx = 0.13f;
+    const float cy = 0.87f;
+    const float dx = nx - cx;
+    const float dy = ny - cy;
+    // Elliptical hit so the circle looks round on landscape.
+    const float rx = 0.12f;
+    const float ry = 0.16f;
+    const float nxn = dx / rx;
+    const float nyn = dy / ry;
+    const float mag2 = nxn * nxn + nyn * nyn;
+    if (mag2 < 0.04f || mag2 > 1.f) return -1;
+
+    if (std::fabs(dx) > std::fabs(dy))
+        return dx < 0.f ? 4 : 5;  // left / right
+    return dy < 0.f ? 0 : 2;      // up=paddle / down=brake
+}
+
+int virtual_button_for_tilt_zones(float nx, float ny) {
     if (ny < 0.58f) return -1;
     if (nx < 0.30f) return 2;             // brake: lower-left
     if (nx > 0.70f && ny < 0.78f) return 0; // paddle: upper-right
     if (nx > 0.70f) return 3;             // jump: lower-right
     return -1;
+}
+
+int virtual_button_for_touch(const Engine* e, float x, float y) {
+    if (e->width <= 0 || e->height <= 0) return -1;
+    const float nx = x / static_cast<float>(e->width);
+    const float ny = y / static_cast<float>(e->height); // Android touch origin is top-left.
+
+    if (!tilt_mode_active())
+        return virtual_button_for_dpad(nx, ny);
+    return virtual_button_for_tilt_zones(nx, ny);
 }
 
 void set_pointer_button(Engine* e, int32_t pointerId, int newButton) {
@@ -126,12 +176,12 @@ void set_pointer_button(Engine* e, int32_t pointerId, int newButton) {
     if (it != e->pointerButtons.end()) oldButton = it->second;
     if (oldButton == newButton) return;
 
-    if (oldButton >= 0 && oldButton < 4) {
+    if (oldButton >= 0 && oldButton < VIRTUAL_BUTTON_COUNT) {
         if (--e->virtualButtonRefs[oldButton] == 0)
             push_joystick_button(e, oldButton, false);
     }
 
-    if (newButton >= 0 && newButton < 4) {
+    if (newButton >= 0 && newButton < VIRTUAL_BUTTON_COUNT) {
         if (e->virtualButtonRefs[newButton]++ == 0)
             push_joystick_button(e, newButton, true);
         e->pointerButtons[pointerId] = newButton;
@@ -142,7 +192,7 @@ void set_pointer_button(Engine* e, int32_t pointerId, int newButton) {
 
 void release_all_virtual_buttons(Engine* e) {
     e->pointerButtons.clear();
-    for (int button = 0; button < 4; button++) {
+    for (int button = 0; button < VIRTUAL_BUTTON_COUNT; button++) {
         if (e->virtualButtonRefs[button] > 0) {
             e->virtualButtonRefs[button] = 0;
             push_joystick_button(e, button, false);
@@ -151,7 +201,7 @@ void release_all_virtual_buttons(Engine* e) {
 }
 
 float normalize_tilt(float raw) {
-    float value = clampf(-1.f, raw / TILT_FULL_SCALE, 1.f);
+    float value = clampf(-1.f, raw / tilt_full_scale(), 1.f);
     float mag = std::fabs(value);
     if (mag < TILT_DEADZONE) return 0.f;
     mag = (mag - TILT_DEADZONE) / (1.f - TILT_DEADZONE);
@@ -191,12 +241,20 @@ void set_sensors_enabled(Engine* e, bool enabled) {
         e->tiltAxis = 0.f;
         e->lastTiltEvent = 999.f;
         push_joystick_axis(e, 0.f);
+        LOGI("accelerometer disabled");
     }
     e->sensorsEnabled = enabled;
 }
 
+void apply_control_settings(Engine* e) {
+    // Only enable the accelerometer when tilt mode is selected.
+    set_sensors_enabled(e, tilt_mode_active());
+    if (!tilt_mode_active())
+        release_all_virtual_buttons(e);
+}
+
 void drain_sensors(Engine* e) {
-    if (!e->sensorQueue) return;
+    if (!e->sensorQueue || !tilt_mode_active()) return;
     ASensorEvent event;
     while (ASensorEventQueue_getEvents(e->sensorQueue, &event, 1) > 0) {
         if (event.type != ASENSOR_TYPE_ACCELEROMETER) continue;
@@ -402,7 +460,8 @@ void handle_cmd(android_app* app, int32_t cmd) {
             egl_drop_surface(e);   // keep the context; surface returns on re-init
             break;
         case APP_CMD_GAINED_FOCUS:
-            set_sensors_enabled(e, true);
+            // Only re-enable tilt when that control mode is selected.
+            set_sensors_enabled(e, tilt_mode_active());
             break;
         case APP_CMD_LOST_FOCUS:
             set_sensors_enabled(e, false);
@@ -544,6 +603,14 @@ bool PollInput(InputEvent& out) {
 const char* DataDir() { return g_dataDir.c_str(); }
 const char* ConfigDir() { return g_configDir.c_str(); }
 
+void SetAndroidControls(int mode, int sensitivity) {
+    g_controlMode = (mode == 1) ? 1 : 0;
+    g_controlSensitivity = std::max(1, std::min(10, sensitivity));
+    LOGI("controls: mode=%s sensitivity=%d",
+         g_controlMode == 0 ? "tilt" : "onscreen", g_controlSensitivity);
+    apply_control_settings(&g_engine);
+}
+
 } // namespace pd
 
 void android_main(android_app* app) {
@@ -553,7 +620,8 @@ void android_main(android_app* app) {
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
     setup_sensors(&g_engine);
-    set_sensors_enabled(&g_engine, true);
+    // Sensors stay off until the engine applies options (tilt vs onscreen).
+    set_sensors_enabled(&g_engine, false);
 
     // Unpack game data to internal storage before the engine boots (A4).
     extract_assets(app);

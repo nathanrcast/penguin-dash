@@ -59,6 +59,11 @@ bool PollInput(InputEvent& out);
 const char* DataDir();
 const char* ConfigDir();
 
+// Live Android control settings from the Configuration screen / race enter.
+// mode: 0 = tilt (accelerometer), 1 = onscreen D-pad (WASD).
+// sensitivity: 1-10 (default 5); scales tilt gain and D-pad turn strength.
+void SetAndroidControls(int mode, int sensitivity);
+
 } // namespace pd
 
 // Engine entry, implemented in android_entry.cpp: runs the full ETR init + main

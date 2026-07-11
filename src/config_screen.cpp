@@ -49,6 +49,9 @@ Then edit the below functions:
 #include "gui.h"
 #include "font.h"
 #include "winsys.h"
+#ifdef __ANDROID__
+#include "native_bridge.h"
+#endif
 
 CGameConfig GameConfig;
 static std::string res_names[NUM_RESOLUTIONS];
@@ -63,8 +66,11 @@ static TWidget* textbuttons[2];
 #ifdef __ANDROID__
 // Render-scale (P6): 3D surface scale, hardware-upscaled. Applied at next launch.
 static TUpDown* render_scale;
-static TLabel* descriptions[6];
+static TUpDown* control_mode;
+static TUpDown* control_sensitivity;
+static TLabel* descriptions[8];
 static const int scale_values[4] = { 50, 67, 75, 100 };
+static const char* control_mode_names[2] = { "Tilt", "Onscreen" };
 static int ScaleIndexFromValue(int value) {
 	int best = 3;
 	for (int i = 0; i < 4; i++)
@@ -84,6 +90,8 @@ void SetConfig() {
 	        detail_level->GetValue() != param.perf_level ||
 #ifdef __ANDROID__
 	        scale_values[render_scale->GetValue()] != param.render_scale ||
+	        control_mode->GetValue() != param.control_mode ||
+	        control_sensitivity->GetValue() != param.control_sensitivity ||
 #endif
 	        fullscreen->checked != param.fullscreen) {
 
@@ -104,6 +112,9 @@ void SetConfig() {
 #ifdef __ANDROID__
 		// Native host reads this from options.txt at boot; applies next launch.
 		param.render_scale = scale_values[render_scale->GetValue()];
+		param.control_mode = control_mode->GetValue();
+		param.control_sensitivity = control_sensitivity->GetValue();
+		pd::SetAndroidControls(param.control_mode, param.control_sensitivity);
 #endif
 		FT.SetFontFromSettings();
 		if (param.language != language->GetValue()) {
@@ -167,10 +178,18 @@ void CGameConfig::Enter() {
 		res_names[i] = Winsys.GetResName(i);
 
 	int framewidth = 550 * Winsys.scale;
+#ifdef __ANDROID__
+	// Extra Android rows (render scale + movement + sensitivity) need more vertical room.
+	area = AutoAreaN(22, 82, framewidth);
+#else
 	area = AutoAreaN(30, 80, framewidth);
+#endif
 	FT.AutoSizeN(4);
 	dd = FT.AutoDistanceN(3);
 	if (dd < 36) dd = 36;
+#ifdef __ANDROID__
+	if (dd > 32) dd = 32; // keep eight rows on-screen
+#endif
 	int rightpos = area.right -48;
 
 	ResetGUI();
@@ -185,6 +204,8 @@ void CGameConfig::Enter() {
 	detail_level = AddUpDown(rightpos, area.top+dd*5, 1, 4, param.perf_level, 2, true);
 #ifdef __ANDROID__
 	render_scale = AddUpDown(rightpos, area.top+dd*6, 0, 3, ScaleIndexFromValue(param.render_scale), 2, true);
+	control_mode = AddUpDown(rightpos, area.top+dd*7, 0, 1, param.control_mode, 1, true);
+	control_sensitivity = AddUpDown(rightpos, area.top+dd*8, 1, 10, param.control_sensitivity, 1, true);
 #endif
 
 	textbuttons[0] = AddTextButton(Trans.Text(28), area.left+50, AutoYPosN(80), siz);
@@ -198,7 +219,11 @@ void CGameConfig::Enter() {
 	}
 #ifdef __ANDROID__
 	descriptions[5] = AddLabel("Render scale (restart)", area.left, area.top + dd*6, colWhite);
+	descriptions[6] = AddLabel("Movement", area.left, area.top + dd*7, colWhite);
+	descriptions[7] = AddLabel("Sensitivity", area.left, area.top + dd*8, colWhite);
 	columnAnchor = std::max(columnAnchor, (int)descriptions[5]->GetSize().x);
+	columnAnchor = std::max(columnAnchor, (int)descriptions[6]->GetSize().x);
+	columnAnchor = std::max(columnAnchor, (int)descriptions[7]->GetSize().x);
 #endif
 	columnAnchor += area.left + 20*Winsys.scale;
 
@@ -225,6 +250,8 @@ void CGameConfig::Loop(float time_step) {
 	descriptions[4]->Focussed(detail_level->focussed());
 #ifdef __ANDROID__
 	descriptions[5]->Focussed(render_scale->focussed());
+	descriptions[6]->Focussed(control_mode->focussed());
+	descriptions[7]->Focussed(control_sensitivity->focussed());
 #endif
 
 	FT.SetColor(colWhite);
@@ -235,6 +262,8 @@ void CGameConfig::Loop(float time_step) {
 	FT.DrawString(columnAnchor, area.top + dd * 5 + 3, Int_StrN(detail_level->GetValue()));
 #ifdef __ANDROID__
 	FT.DrawString(columnAnchor, area.top + dd * 6 + 3, Int_StrN(scale_values[render_scale->GetValue()]) + "%");
+	FT.DrawString(columnAnchor, area.top + dd * 7 + 3, control_mode_names[control_mode->GetValue()]);
+	FT.DrawString(columnAnchor, area.top + dd * 8 + 3, Int_StrN(control_sensitivity->GetValue()));
 #endif
 
 #ifndef __ANDROID__

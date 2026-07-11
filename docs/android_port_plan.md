@@ -135,8 +135,11 @@ a JRE is not enough for Gradle/AGP; point `JAVA_HOME` at it). Release signing re
 
 ## Remaining polish (post-A5)
 
-- Tilt-steer feel pass — needs a human physically tilting the tablet (sensor path ran live without
-  crashing, but steering feel is untested).
+- ~~Tilt-steer feel pass~~ DONE 2026-07-10: Configuration screen now has **Movement**
+  (Tilt / Onscreen D-pad) and **Sensitivity** (1–10). Onscreen mode is a WASD-equivalent
+  D-pad (W=paddle, S=brake, A/D=steer) plus JUMP; tilt mode keeps the accelerometer +
+  BRAKE/PADDLE/JUMP pads. Control overlays use high-contrast dark fills against snow.
+  Settings apply live via `pd::SetAndroidControls` (no restart).
 - ~~Rebrand art assets~~ DONE 2026-07-09: `menu_title.png` + `splash_1.png` replaced with a
   Penguin Dash wordmark (generator: `tools/make_logo.py`, uses the game's `pc_20.ttf`);
   versionCode bumped to 2 so installed devices re-extract assets. Device-verified.

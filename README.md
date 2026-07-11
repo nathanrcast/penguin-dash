@@ -12,16 +12,17 @@ no public git, so there is no upstream commit history). Play-tested + approved 2
 
 ## Status
 
-**Released for Android — v0.3.0.** A signed APK is on the
+**Released for Android — v0.4.0.** A signed APK is on the
 [Releases page](https://github.com/nathanrcast/penguin-dash/releases/latest). The legacy
 immediate-mode GL renderer has been rewritten on **GLES2 shaders** (desktop and Android share the
 code path), and an Android app under `android/` hosts the engine natively (`NativeActivity` + EGL,
 no Java activity): menus, full races, HUD, and touch + tilt controls run on device. Audio is wired
 (MediaPlayer music + SoundPool SFX) and verified on device.
 
-v0.3.0 landed a performance overhaul — static-VBO terrain with shader passes, batched particle
-draws, a fast per-object model path, and a render-scale option for older tablets. Play-tested smooth
-on the Galaxy Tab A9+; older tablets should set render scale to 67–75%. History:
+v0.4.0 adds **Movement** (Tilt / Onscreen D-pad) and **Sensitivity** (1–10) on the Configuration
+screen, plus high-contrast circular on-screen pads. v0.3.0 landed the performance overhaul —
+static-VBO terrain, batched particles, and a render-scale option for older tablets. Play-tested on
+the Galaxy Tab A9+; older tablets should set render scale to 67–75%. History:
 [`docs/port_plan.md`](docs/port_plan.md) →
 [`docs/gles_render_audit.md`](docs/gles_render_audit.md) →
 [`docs/android_port_plan.md`](docs/android_port_plan.md) →

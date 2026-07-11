@@ -31,6 +31,7 @@ GNU General Public License for more details.
 #include "winsys.h"
 #include "game_ctrl.h"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 
@@ -378,22 +379,94 @@ static void DrawAndroidTouchButtonRect(float left, float top, float right, float
 		left,  y1
 	};
 
-	Shader2D_DrawArrays(GL_TRIANGLE_FAN, rect, nullptr, 4, false, sf::Color(255, 255, 255, 44));
-	Shader2D_DrawArrays(GL_LINE_LOOP, rect, nullptr, 4, false, sf::Color(255, 255, 255, 115));
+	// Dark fill + bright border so pads read against snow.
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, rect, nullptr, 4, false, sf::Color(20, 28, 40, 150));
+	Shader2D_DrawArrays(GL_LINE_LOOP, rect, nullptr, 4, false, sf::Color(255, 255, 255, 230));
 }
 
-static void DrawAndroidTouchLabel(float left, float top, const char* label) {
-	const float w = Winsys.resolution.width;
+static void DrawAndroidTouchLabel(float left, float top, float width, float height, const char* label) {
 	const float h = Winsys.resolution.height;
-	FT.SetColor(sf::Color(255, 255, 255, 165));
-	FT.SetSize(std::max(24u, static_cast<unsigned int>(h * 0.035f)));
-	FT.DrawString(left + w * 0.035f, top + h * 0.055f, label);
+	FT.SetSize(std::max(22u, static_cast<unsigned int>(h * 0.032f)));
+	float textW = FT.GetTextWidth(label);
+	float x = left + (width - textW) * 0.5f;
+	float y = top + height * 0.38f;
+	// Dark shadow then bright label for contrast on snow.
+	FT.SetColor(sf::Color(0, 0, 0, 200));
+	FT.DrawString(x + 2.f, y + 2.f, label);
+	FT.SetColor(sf::Color(255, 255, 255, 245));
+	FT.DrawString(x, y, label);
 }
 
-static void DrawAndroidTouchControls() {
+// Screen-space (y down) → GL y-up used by Shader2D.
+static inline float AndroidGlY(float screenY) {
+	return Winsys.resolution.height - screenY;
+}
+
+static void DrawAndroidCircle(float cx, float cy, float radius, const sf::Color& fill, const sf::Color& border) {
+	constexpr int N = 28;
+	// Fan needs the first rim vertex repeated at the end to close the disc
+	// (otherwise the last wedge is missing → Pac-Man cutout).
+	float glFan[(N + 2) * 2];
+	float glRim[N * 2];
+	glFan[0] = cx;
+	glFan[1] = AndroidGlY(cy);
+	for (int i = 0; i < N; i++) {
+		float a = static_cast<float>(i) * 6.2831853f / static_cast<float>(N);
+		float x = cx + std::cos(a) * radius;
+		float y = cy + std::sin(a) * radius;
+		glFan[(i + 1) * 2] = x;
+		glFan[(i + 1) * 2 + 1] = AndroidGlY(y);
+		glRim[i * 2] = x;
+		glRim[i * 2 + 1] = AndroidGlY(y);
+	}
+	glFan[(N + 1) * 2] = glFan[2];
+	glFan[(N + 1) * 2 + 1] = glFan[3];
+	Shader2D_DrawArrays(GL_TRIANGLE_FAN, glFan, nullptr, N + 2, false, fill);
+	Shader2D_DrawArrays(GL_LINE_LOOP, glRim, nullptr, N, false, border);
+}
+
+// dir: 0=up, 1=down, 2=left, 3=right. tip points outward from (cx,cy).
+static void DrawAndroidArrow(float cx, float cy, float size, int dir, const sf::Color& col) {
+	float tipX = cx, tipY = cy, b1x = cx, b1y = cy, b2x = cx, b2y = cy;
+	const float half = size * 0.55f;
+	switch (dir) {
+		case 0: // up
+			tipY = cy - size;
+			b1x = cx - half; b1y = cy + size * 0.35f;
+			b2x = cx + half; b2y = cy + size * 0.35f;
+			break;
+		case 1: // down
+			tipY = cy + size;
+			b1x = cx - half; b1y = cy - size * 0.35f;
+			b2x = cx + half; b2y = cy - size * 0.35f;
+			break;
+		case 2: // left
+			tipX = cx - size;
+			b1x = cx + size * 0.35f; b1y = cy - half;
+			b2x = cx + size * 0.35f; b2y = cy + half;
+			break;
+		default: // right
+			tipX = cx + size;
+			b1x = cx - size * 0.35f; b1y = cy - half;
+			b2x = cx - size * 0.35f; b2y = cy + half;
+			break;
+	}
+	const float tri[] = {
+		tipX, tipY,
+		b1x, b1y,
+		b2x, b2y
+	};
+	float gl[6];
+	for (int i = 0; i < 3; i++) {
+		gl[i * 2] = tri[i * 2];
+		gl[i * 2 + 1] = AndroidGlY(tri[i * 2 + 1]);
+	}
+	Shader2D_DrawArrays(GL_TRIANGLES, gl, nullptr, 3, false, col);
+}
+
+static void DrawAndroidTiltZones() {
 	const float w = Winsys.resolution.width;
 	const float h = Winsys.resolution.height;
-	if (w <= 0 || h <= 0) return;
 
 	const float leftX = 0.f;
 	const float leftR = w * 0.30f;
@@ -410,10 +483,62 @@ static void DrawAndroidTouchControls() {
 	Shader2D_End();
 
 	Winsys.beginSFML();
-	DrawAndroidTouchLabel(leftX, top, "BRAKE");
-	DrawAndroidTouchLabel(rightL, top, "PADDLE");
-	DrawAndroidTouchLabel(rightL, split, "JUMP");
+	DrawAndroidTouchLabel(leftX, top, leftR - leftX, bottom - top, "BRAKE");
+	DrawAndroidTouchLabel(rightL, top, rightR - rightL, split - top, "PADDLE");
+	DrawAndroidTouchLabel(rightL, split, rightR - rightL, bottom - split, "JUMP");
 	Winsys.endSFML();
+}
+
+static void DrawAndroidDpad() {
+	const float w = Winsys.resolution.width;
+	const float h = Winsys.resolution.height;
+	const sf::Color fill(20, 28, 40, 160);
+	const sf::Color border(255, 255, 255, 230);
+	const sf::Color arrow(255, 255, 255, 235);
+
+	// Near the bottom-left edge; keep in sync with native_main.cpp hit zones.
+	const float cx = w * 0.13f;
+	const float cy = h * 0.87f;
+	const float radius = std::min(w, h) * 0.125f;
+
+	const float jumpCx = w * 0.90f;
+	const float jumpCy = h * 0.88f;
+	const float jumpR = std::min(w, h) * 0.070f;
+
+	Shader2D_Begin(w, h);
+	DrawAndroidCircle(cx, cy, radius, fill, border);
+	DrawAndroidCircle(jumpCx, jumpCy, jumpR, fill, border);
+
+	const float arrowSize = radius * 0.28f;
+	const float arrowOut = radius * 0.48f;
+	DrawAndroidArrow(cx, cy - arrowOut, arrowSize, 0, arrow);
+	DrawAndroidArrow(cx, cy + arrowOut, arrowSize, 1, arrow);
+	DrawAndroidArrow(cx - arrowOut, cy, arrowSize, 2, arrow);
+	DrawAndroidArrow(cx + arrowOut, cy, arrowSize, 3, arrow);
+	Shader2D_End();
+
+	Winsys.beginSFML();
+	FT.SetSize(std::max(14u, static_cast<unsigned int>(jumpR * 0.50f)));
+	const char* jumpLabel = "JUMP";
+	float textW = FT.GetTextWidth(jumpLabel);
+	float tx = jumpCx - textW * 0.5f;
+	float ty = jumpCy - FT.GetSize() * 0.35f;
+	FT.SetColor(sf::Color(0, 0, 0, 200));
+	FT.DrawString(tx + 1.5f, ty + 1.5f, jumpLabel);
+	FT.SetColor(sf::Color(255, 255, 255, 245));
+	FT.DrawString(tx, ty, jumpLabel);
+	Winsys.endSFML();
+}
+
+static void DrawAndroidTouchControls() {
+	const float w = Winsys.resolution.width;
+	const float h = Winsys.resolution.height;
+	if (w <= 0 || h <= 0) return;
+
+	if (param.control_mode == 1)
+		DrawAndroidDpad();
+	else
+		DrawAndroidTiltZones();
 }
 #endif
 

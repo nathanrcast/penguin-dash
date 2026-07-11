@@ -38,6 +38,9 @@ GNU General Public License for more details.
 #include "physics.h"
 #include "tux.h"
 #include <algorithm>
+#ifdef __ANDROID__
+#include "native_bridge.h"
+#endif
 
 #define MAX_JUMP_AMT 1.0
 #define ROLL_DECAY 0.2
@@ -179,6 +182,12 @@ void CRacing::Jbutt(int button, bool pressed) {
 		case 3:
 			key_charging = pressed;
 			break;
+		case 4:
+			left_turn = pressed;
+			break;
+		case 5:
+			right_turn = pressed;
+			break;
 	}
 }
 
@@ -243,6 +252,10 @@ void CRacing::Enter() {
 	SetSoundVolumes();
 	Music.PlayTheme(g_game.theme_id, MUS_RACING);
 
+#ifdef __ANDROID__
+	pd::SetAndroidControls(param.control_mode, param.control_sensitivity);
+#endif
+
 	g_game.finish = false;
 
 	Winsys.KeyRepeat(false);
@@ -286,8 +299,15 @@ static void CalcSteeringControls(CControl *ctrl, float time_step) {
 		ctrl->turn_animation += ctrl->turn_fact * 2 * time_step;
 		ctrl->turn_animation = clamp(-1.0, ctrl->turn_animation, 1.0);
 	} else if (left_turn ^ right_turn) {
-		if (left_turn) ctrl->turn_fact = -1.0;
-		else ctrl->turn_fact = 1.0;
+		double mag = 1.0;
+#ifdef __ANDROID__
+		// D-pad turn strength scales with sensitivity (1→0.4 … 10→1.0).
+		// Desktop keyboard WASD stays full lock (±1).
+		int sens = std::max(1, std::min(10, param.control_sensitivity));
+		mag = 0.4 + 0.6 * (sens - 1) / 9.0;
+#endif
+		if (left_turn) ctrl->turn_fact = -mag;
+		else ctrl->turn_fact = mag;
 		ctrl->turn_animation += ctrl->turn_fact * 2 * time_step;
 		ctrl->turn_animation = clamp(-1.0, ctrl->turn_animation, 1.0);
 	} else {

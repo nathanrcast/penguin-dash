@@ -53,6 +53,7 @@ void pd_engine_main() {
 	std::srand(static_cast<unsigned>(std::time(nullptr)));
 
 	InitConfig();
+	pd::SetAndroidControls(param.control_mode, param.control_sensitivity);
 	InitGame();
 	Winsys.Init();                 // creates the (EGL-backed) window, sets resolution
 	InitOpenglExtensions();
